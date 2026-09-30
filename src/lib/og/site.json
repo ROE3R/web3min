@@ -1,6 +1,9 @@
 {
   "title": "web3min",
-  "type": "x:game",
+  "description": "Platform edukasi dan simulasi Web3 interaktif.",
+  "type": "website",
+  "url": "https://web3min.com",
+  "image": "https://web3min.com/og.jpg",
   "card": "custom",
-  "color": "F25D7A"
+  "color": "1367E8"
 }

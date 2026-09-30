@@ -21,15 +21,15 @@ const STEPS: Step[] = [
   {
     target: "start",
     mood: "wave",
-    say: "Tekan tombol hijau. Baca dulu, baru kuis. Sekitar 3 menit.",
-    done: "Lanjut",
+    say: "Mulai petualanganmu dari sini. Baca 3 menit dulu, baru kuis.",
+    done: "Paham, Lanjut",
     pad: 6,
     radius: 22,
   },
   {
     target: "hearts",
     mood: "think",
-    say: "Salah jawab, nyawa berkurang. Habis? Buka Kisah — tidak memakai nyawa.",
+    say: "Salah jawab, nyawa berkurang. Kalau nyawa habis, kamu tetap bisa baca Kisah karena Kisah tidak memakai nyawa.",
     done: "Lanjut",
     pad: 8,
     radius: 999,
@@ -62,10 +62,10 @@ function readBox(id: Target, pad: number): Box | null {
 function placePanel(spot: Box, panelH: number, vw: number, vh: number) {
   const pad = 16;
   const nav = 80;
-  const gap = 22;
+  const gap = 20;
   const width = Math.min(360, vw - pad * 2);
   const left = Math.max(pad, (vw - width) / 2);
-  const minTop = 8;
+  const minTop = 72; // Below top HUD (56px + 16px buffer)
   const maxTop = Math.max(minTop, vh - panelH - nav);
   const belowTop = spot.top + spot.height + gap;
   const aboveTop = spot.top - panelH - gap;
@@ -90,11 +90,21 @@ export function CoachTour() {
   const [step, setStep] = useState(0);
   const [spot, setSpot] = useState<Box | null>(null);
   const [panelBox, setPanelBox] = useState({ top: 120, left: 16, width: 320 });
+  // Portal hanya boleh dirender SETELAH hydration selesai. Tanpa ini, server
+  // mengembalikan `null` (karena `typeof document === "undefined"`) sementara
+  // klien pada render pertama sudah mengembalikan `createPortal(...)` — React
+  // membaca itu sebagai mismatch dan melempar error #418 di setiap kunjungan
+  // ke beranda. `mounted` membuat render pertama klien SAMA dengan server.
+  const [mounted, setMounted] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const current = STEPS[step] ?? STEPS[0];
   const last = step >= STEPS.length - 1;
   const active = !coachSeen && completed.length === 0;
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!active) return;
@@ -170,11 +180,17 @@ export function CoachTour() {
     setStep((n) => n + 1);
   }
 
-  if (!active || typeof document === "undefined") return null;
+  if (!mounted || !active) return null;
 
   return createPortal(
     <div className="coach-root" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-      <div className="coach-catch" />
+      <div
+        className="coach-catch cursor-pointer"
+        onClick={() => completeGuide()}
+        role="button"
+        tabIndex={-1}
+        aria-label="Lewati petunjuk tur"
+      />
       {spot ? (
         <div
           className="coach-spot"
@@ -214,13 +230,17 @@ export function CoachTour() {
             <p id={titleId}>{current.say}</p>
           </SpeechBubble>
         </div>
-        <div className="mt-3 flex items-center gap-3">
-          <DuoButton className="min-w-32 flex-1" onClick={next}>
-            {current.done}
-          </DuoButton>
+        <div className="mt-4 flex items-center gap-2.5">
           <button
             type="button"
-            className="min-h-11 shrink-0 px-2 text-sm font-bold text-muted"
+            className="flex-1 py-3 px-5 rounded-full bg-gradient-to-b from-blush-50 to-blush-200 hover:brightness-105 text-choco-900 font-pixel font-bold text-xs border-2 border-candy-600 shadow-[0_3px_0_#B01F62] active:translate-y-1 active:shadow-none transition-all cursor-pointer"
+            onClick={next}
+          >
+            {current.done}
+          </button>
+          <button
+            type="button"
+            className="min-h-11 shrink-0 px-4 py-2.5 text-xs font-pixel font-bold text-choco-700 hover:text-choco-900 rounded-full border-2 border-choco-900 bg-white hover:bg-candy-50 shadow-[0_2px_0_#3B2218] active:translate-y-0.5 transition-all cursor-pointer"
             onClick={() => completeGuide()}
           >
             Lewati

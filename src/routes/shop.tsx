@@ -1,17 +1,60 @@
-import { Storefront } from "@/lib/kicon";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+  Ticket,
+  ShieldCheck,
+  Shield,
+  Crown,
+  Star,
+  Heart,
+  Sparkles,
+  Check,
+  RotateCcw,
+  ShoppingBag,
+  Shirt,
+  Store,
+  Layers,
+  Hand,
+  Smile,
+  PartyPopper,
+  Coffee,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Dialog } from "@/components/dialog";
-import { DuoButton } from "@/components/duo-button";
-import { Mascot } from "@/components/mascot";
+import { Mascot, type MascotMood } from "@/components/mascot";
 import { BlockStamp } from "@/components/motif";
-import { ACCESSORIES, SLOT_LABEL, SLOTS, type Accessory, type AccessorySlot, type Worn } from "@/lib/accessories";
-import { playBuy, playDeny, playEquip, playFreeze, playUnequip } from "@/lib/audio";
-import { FREEZE_COST, HEART_REFILL_COST } from "@/lib/shop";
-import { MAX_HEARTS, UNLIMITED_GEMS, formatGems, useProgress } from "@/lib/store";
+import {
+  ACCESSORIES,
+  SLOT_LABEL,
+  SLOTS,
+  type Accessory,
+  type AccessorySlot,
+  type Worn,
+} from "@/lib/accessories";
+import {
+  playBuy,
+  playDeny,
+  playEquip,
+  playFreeze,
+  playUnequip,
+} from "@/lib/audio";
+import { FREEZE_COST, HEART_REFILL_COST, isLimitedItem } from "@/lib/shop";
+import { MAX_HEARTS, formatGems, useProgress } from "@/lib/store";
+import {
+  rpcBuyFreeze,
+  rpcRefillHearts,
+  rpcRefillHeartsFree,
+  rpcGetFreeRefillQuota,
+  rpcBuyTickets,
+  syncProgressFromServer,
+  type FreeRefillQuota,
+} from "@/lib/server-sync";
+import { SurfaceCard } from "@/components/ui/surface-card";
+import { TactileButton } from "@/components/ui/tactile-button";
 
 export const Route = createFileRoute("/shop")({ component: ShopPage });
+
+type ShopMode = "shop" | "wardrobe";
 
 function ShopPage() {
   const gems = useProgress((s) => s.gems);
@@ -23,30 +66,64 @@ function ShopPage() {
   const refillHearts = useProgress((s) => s.refillHearts);
   const equipOutfit = useProgress((s) => s.equipOutfit);
   const freeze = useProgress((s) => s.streakFreeze);
-  const [slot, setSlot] = useState<AccessorySlot | "all">("all");
-  const [preview, setPreview] = useState<string | null>(null);
+  const raffleTickets = useProgress((s) => s.raffleTickets ?? 0);
+
+  /**
+   * Kuota isi nyawa GRATIS: 2x sehari (4x untuk supporter). Dihitung di
+   * database — jangan pernah menghitung kuota di klien, bisa dipalsukan.
+   */
+  const [freeQuota, setFreeQuota] = useState<FreeRefillQuota | null>(null);
+  const [freeBusy, setFreeBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void rpcGetFreeRefillQuota().then((q) => {
+      if (alive) setFreeQuota(q);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const buyRaffleTicketsWithGems = useProgress((s) => s.buyRaffleTicketsWithGems);
+
+  // Read initial tab from URL param if present
+  const [mode, setMode] = useState<ShopMode>(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search).get("tab");
+      if (p === "wardrobe" || p === "ganti") return "wardrobe";
+    }
+    return "shop";
+  });
+
+  // Keep URL search synchronized
+  const handleModeChange = (newMode: ShopMode) => {
+    setMode(newMode);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (newMode === "wardrobe") {
+        url.searchParams.set("tab", "wardrobe");
+      } else {
+        url.searchParams.delete("tab");
+      }
+      window.history.replaceState(null, "", url.toString());
+    }
+  };
+
+  // Ruang Ganti state
+  const [wardrobeSlot, setWardrobeSlot] = useState<AccessorySlot | "all">("all");
+  const [wardrobeScope, setWardrobeScope] = useState<"owned" | "all">(outfits.length > 0 ? "owned" : "all");
+  const [blobiMood, setBlobiMood] = useState<MascotMood>("wave");
+  const [previewWorn, setPreviewWorn] = useState<Worn | null>(null);
+
+  // Shared state
   const [confirm, setConfirm] = useState<Accessory | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<{ text: string; actionText?: string; onAction?: () => void } | null>(null);
 
-  const shown = useMemo(
-    () => (slot === "all" ? ACCESSORIES : ACCESSORIES.filter((a) => a.slot === slot)),
-    [slot],
-  );
-
-  const previewWorn: Worn = useMemo(() => {
-    if (!preview && !confirm) return worn;
-    const id = confirm?.id ?? preview;
-    const acc = ACCESSORIES.find((a) => a.id === id);
-    if (!acc) return worn;
-    return { ...worn, [acc.slot]: acc.id };
-  }, [preview, confirm, worn]);
+  const activeWorn = previewWorn ?? worn;
 
   const heartsFull = hearts >= MAX_HEARTS;
-  const heartShort = HEART_REFILL_COST - gems;
-  const freezeShort = FREEZE_COST - gems;
 
-  function flash(msg: string) {
-    setNote(msg);
+  function flash(text: string, actionText?: string, onAction?: () => void) {
+    setNote({ text, actionText, onAction });
     window.setTimeout(() => setNote(null), 4000);
   }
 
@@ -54,209 +131,805 @@ function ShopPage() {
     if (buyOutfit(acc.id)) {
       playBuy();
       setConfirm(null);
-                  flash("Item berhasil dibeli.");
+      flash(
+        `"${acc.name}" berhasil dibeli!`,
+        "Pakai Sekarang",
+        () => {
+          equipOutfit(acc.id);
+          setPreviewWorn(null);
+        }
+      );
     } else {
       playDeny();
     }
   }
 
+  // Accessories shown in Ruang Ganti
+  const wardrobeItems = useMemo(() => {
+    return ACCESSORIES.filter((a) => {
+      // Item limited yang belum dimiliki tidak ditampilkan
+      if (isLimitedItem(a.id) && !outfits.includes(a.id)) {
+        return false;
+      }
+      const matchesSlot = wardrobeSlot === "all" || a.slot === wardrobeSlot;
+      if (!matchesSlot) return false;
+      if (wardrobeScope === "owned") {
+        return outfits.includes(a.id);
+      }
+      return true;
+    });
+  }, [wardrobeSlot, wardrobeScope, outfits]);
+
+  const ownedCount = outfits.length;
+  const totalCount = ACCESSORIES.length;
+
+  const isWearingSomething = Boolean(activeWorn.hat || activeWorn.face || activeWorn.neck || activeWorn.held);
+
   return (
     <AppShell>
-      <main className="px-4 py-5 lg:grid lg:grid-cols-[260px_1fr] lg:items-start lg:gap-8 lg:px-6">
-        <div className="flex flex-col items-center text-center lg:sticky lg:top-16">
-          <p className="flex items-center gap-1.5 text-sm font-medium text-primary">
-            <Storefront className="size-3.5" weight="fill" />
-            Toko
-          </p>
-          <div className="mt-2">
-            <Mascot mood="wave" size={180} worn={previewWorn} />
-          </div>
-          <h1 className="mt-1 text-[28px] font-extrabold leading-[34px]">Gaya web3min</h1>
-          <p className="mt-1 flex items-center justify-center gap-1.5 text-base font-medium text-muted">
-            <BlockStamp size={16} />
-            {formatGems(gems)} bintang · {freeze} pelindung streak
-          </p>
-          <p className="mt-2 text-sm leading-5 text-muted">
-            Dapatkan bintang dengan menyelesaikan pelajaran, misi harian, dan kisah.
-          </p>
-        </div>
-
-        <div>
-
-        {note ? (
-          <p className="mt-3 rounded-2xl bg-primary-soft px-3 py-2 text-center text-sm font-medium text-primary-deep" role="status" aria-live="polite">
-            {note}
-          </p>
-        ) : null}
-
-        <h2 className="mt-6 text-sm font-extrabold">Perlengkapan</h2>
-        <ul className="mt-2 flex flex-col gap-2">
-          <li className="surface flex items-start gap-3 p-4">
-            <div className="min-w-0 flex-1">
-              <h3 className="font-extrabold">Pulihkan nyawa</h3>
-              <p className="mt-1 text-sm font-bold text-muted">Nyawamu langsung kembali penuh.</p>
-              <p className="mt-1 flex items-center gap-1 text-sm font-extrabold text-gold">
-                <BlockStamp size={14} /> {HEART_REFILL_COST} bintang
-              </p>
-              {heartsFull ? <p className="mt-1 text-sm font-bold text-muted">Nyawa sudah penuh</p> : null}
-              {!heartsFull && !UNLIMITED_GEMS && gems < HEART_REFILL_COST ? (
-                <p className="mt-1 text-sm font-bold text-blob">Kurang {heartShort} bintang</p>
-              ) : null}
-            </div>
-            <DuoButton
-              size="sm"
-              disabled={heartsFull || (!UNLIMITED_GEMS && gems < HEART_REFILL_COST)}
-              onClick={() => {
-                if (refillHearts()) {
-                  playBuy();
-                  flash("Nyawa sudah dipulihkan.");
-                } else playDeny();
-              }}
-            >
-              Pulihkan
-            </DuoButton>
-          </li>
-          <li className="surface flex items-start gap-3 p-4">
-            <div className="min-w-0 flex-1">
-              <h3 className="font-extrabold">Pelindung streak</h3>
-              <p className="mt-1 text-sm text-muted">Lindungi streak ketika kamu melewatkan satu hari. Dipakai otomatis.</p>
-              <p className="mt-1 flex items-center gap-1 text-sm font-extrabold text-gold">
-                <BlockStamp size={14} /> {FREEZE_COST} bintang
-              </p>
-              {!UNLIMITED_GEMS && gems < FREEZE_COST ? <p className="mt-1 text-sm font-bold text-blob">Kurang {freezeShort} bintang</p> : null}
-            </div>
-            <DuoButton
-              size="sm"
-              disabled={!UNLIMITED_GEMS && gems < FREEZE_COST}
-              onClick={() => {
-                if (buyFreeze()) {
-                  playFreeze();
-                  flash("Pelindung streak ditambah.");
-                } else playDeny();
-              }}
-            >
-              Beli
-            </DuoButton>
-          </li>
-        </ul>
-
-        <h2 className="mt-6 text-sm font-extrabold">Aksesori</h2>
-        <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-          <SlotChip active={slot === "all"} onClick={() => setSlot("all")}>
-            Semua
-          </SlotChip>
-          {SLOTS.map((s) => (
-            <SlotChip key={s} active={slot === s} onClick={() => setSlot(s)}>
-              {SLOT_LABEL[s]}
-            </SlotChip>
-          ))}
-        </div>
-
-        <ul className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {shown.map((acc) => {
-            const owned = outfits.includes(acc.id);
-            const on = worn[acc.slot] === acc.id;
-            const short = acc.cost - gems;
-            return (
-              <li
-                key={acc.id}
-                className="surface flex flex-col overflow-hidden p-3 [content-visibility:auto] [contain-intrinsic-size:240px]"
-                onMouseEnter={() => setPreview(acc.id)}
-                onMouseLeave={() => setPreview(null)}
+      <main className="px-3 py-4 sm:px-4 sm:py-6 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:pb-28 max-w-6xl mx-auto space-y-6">
+        {/* Flash Notification */}
+        {note && (
+          <div className="p-3.5 rounded-[18px] bg-candy-100 border-2 border-choco-900 text-choco-900 text-sm font-pixel font-bold flex flex-col sm:flex-row items-center justify-between gap-2 shadow-[0_3px_0_#3B2218] animate-in fade-in slide-in-from-top-2">
+            <span>{note.text}</span>
+            {note.onAction && (
+              <button
+                type="button"
+                onClick={note.onAction}
+                className="px-3.5 py-1 min-h-11 rounded-[10px] bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 text-xs font-pixel font-bold hover:brightness-105 shadow-[0_2px_0_#B01F62] cursor-pointer"
               >
-                <button type="button" className="flex justify-center" onClick={() => setPreview(acc.id)} aria-label={`Preview ${acc.name}`}>
-                  <Mascot mood="idle" size={88} lite worn={{ [acc.slot]: acc.id }} />
-                </button>
-                <p className="mt-1 text-xs font-bold text-muted">{SLOT_LABEL[acc.slot]}</p>
-                <h3 className="font-extrabold leading-tight">{acc.name}</h3>
-                {owned ? (
-                  <p className="mt-1 text-xs font-bold text-primary">{on ? "Sedang dipakai" : "Punya"}</p>
-                ) : (
-                  <p className="mt-1 flex items-center gap-1 text-xs font-extrabold text-gold">
-                    <BlockStamp size={12} /> {acc.cost} bintang
-                  </p>
-                )}
-                <div className="mt-2">
-                  {owned ? (
-                    <DuoButton
-                      size="sm"
-                      wide
-                      variant={on ? "ghost" : "white"}
-                      onClick={() => {
-                        equipOutfit(acc.id);
-                        if (on) playUnequip();
-                        else playEquip();
-                      }}
-                    >
-                      {on ? "Lepas" : "Pakai sekarang"}
-                    </DuoButton>
-                  ) : !UNLIMITED_GEMS && gems < acc.cost ? (
-                    <div className="mt-auto">
-                      <DuoButton size="sm" wide disabled>
-                        Kurang {short} bintang
-                      </DuoButton>
-                      <Link to="/" className="mt-1 block truncate text-center text-sm font-bold text-primary">
-                        Dapatkan bintang
-                      </Link>
-                    </div>
-                  ) : (
-                    <DuoButton size="sm" wide onClick={() => setConfirm(acc)}>
-                      Beli item
-                    </DuoButton>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-      </main>
+                {note.actionText} →
+              </button>
+            )}
+          </div>
+        )}
 
-      <Dialog
-        open={Boolean(confirm)}
-        title={confirm ? `Beli ${confirm.name}?` : "Beli item"}
-        description={
-          confirm
-            ? UNLIMITED_GEMS
-              ? `Harga ${confirm.cost} bintang. Saldo unlimited, tidak terpotong.`
-              : `Harga ${confirm.cost} bintang. Saldo setelah membeli: ${gems - confirm.cost} bintang.`
-            : undefined
-        }
-        onClose={() => setConfirm(null)}
-      >
-        <div className="mt-4 flex gap-2">
-          <DuoButton variant="ghost" className="flex-1" onClick={() => setConfirm(null)}>
-            Batal
-          </DuoButton>
-          <DuoButton className="flex-1" onClick={() => confirm && purchase(confirm)}>
-            Beli
-          </DuoButton>
+        {/* PRIMARY MODE SELECTOR: Toko vs Ruang Ganti Blobi */}
+        <div className="flex items-center justify-center">
+          <div className="flex w-full max-w-md items-center gap-1.5 rounded-2xl border-2 border-choco-900/20 bg-gradient-to-b from-white via-cream-fill to-cream-fill-deep p-1.5 shadow-[0_4px_0_#3B2218]">
+            <button
+              type="button"
+              onClick={() => handleModeChange("shop")}
+              aria-pressed={mode === "shop"}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-xl py-2 min-h-11 text-xs sm:text-sm font-pixel font-bold transition-all cursor-pointer ${
+                mode === "shop"
+                  ? "border-2 border-candy-600 bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 shadow-[0_3px_0_#B01F62] hover:brightness-105 hover:-translate-y-0.5 active:translate-y-[3px] active:shadow-none"
+                  : "text-choco-700 hover:text-choco-900 hover:bg-white/60"
+              }`}
+            >
+              <Store className="size-4" />
+              <span>Toko Blobi</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleModeChange("wardrobe")}
+              aria-pressed={mode === "wardrobe"}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-xl py-2 min-h-11 text-xs sm:text-sm font-pixel font-bold transition-all cursor-pointer ${
+                mode === "wardrobe"
+                  ? "border-2 border-candy-600 bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 shadow-[0_3px_0_#B01F62] hover:brightness-105 hover:-translate-y-0.5 active:translate-y-[3px] active:shadow-none"
+                  : "text-choco-700 hover:text-choco-900 hover:bg-white/60"
+              }`}
+            >
+              <Sparkles className="size-4" />
+              <span>Ruang Ganti</span>
+              {ownedCount > 0 && (
+                <span
+                  className={`ml-1 px-2 py-0.5 rounded-full text-[10px] font-pixel font-bold ${
+                    mode === "wardrobe"
+                      ? "bg-gradient-to-b from-lemon-bright to-lemon text-choco-900 border-2 border-lemon-deep shadow-[0_2px_0_#D9A400]"
+                      : "bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900"
+                  }`}
+                >
+                  {ownedCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
-      </Dialog>
-    </AppShell>
-  );
-}
 
-function SlotChip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        active
-          ? "min-h-11 shrink-0 rounded-full bg-primary px-4 text-sm font-extrabold text-primary-ink"
-          : "min-h-11 shrink-0 rounded-full bg-paper px-4 text-sm font-bold text-muted"
-      }
-    >
-      {children}
-    </button>
+        {/* ═══════════════════════════════════════════════════════ */}
+        {/* MODE 1: TOKO (Store View)                             */}
+        {/* ═══════════════════════════════════════════════════════ */}
+        {mode === "shop" && (
+          <div className="space-y-6">
+            {/* Header Toko */}
+            <div className="hidden sm:block p-5 sm:p-6 rounded-3xl bg-gradient-to-b from-white via-cream-fill to-cream-fill-deep border-2 border-choco-900 shadow-[0_6px_0_#3B2218] space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h1 className="font-pixel font-bold text-2xl sm:text-3xl text-choco-900 tracking-tight flex items-center gap-2">
+                    <Store className="size-6 sm:size-7 text-candy-500" />
+                    <span>Toko Web3min</span>
+                  </h1>
+                  <p className="text-xs sm:text-sm font-semibold text-choco-700 mt-1 leading-relaxed font-sans">
+                    Tukarkan koin dari hasil belajar untuk membeli penguat streak, isi ulang nyawa, dan aksesori eksklusif Blobi.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION: Item Toko Blobi */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between px-1">
+                <div>
+                  <span className="block font-pixel text-[12px] font-bold uppercase tracking-wider text-choco-600">
+                    Tukar koin hasil belajar
+                  </span>
+                  <h2 className="text-xl font-pixel font-bold text-choco-900 flex items-center gap-2">
+                    <Store className="size-5 text-candy-500" />
+                    <span>Item & Penguat Belajar</span>
+                  </h2>
+                </div>
+              </div>
+
+              {/* Asymmetrical Bento Showcase for Items */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                {/* 1. Hero Bento Card: Isi Ulang Nyawa (Spans 2 Cols) */}
+                <div className="md:col-span-2 flex flex-col justify-between rounded-3xl border-2 border-choco-900 bg-gradient-to-b from-[#FFF5F5] via-[#FFEBEB] to-[#FED7D7] p-5 md:p-6 shadow-[0_6px_0_#3B2218]">
+                  <div>
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 rounded-full border-2 border-choco-900 bg-white/90 px-2.5 py-0.5 text-[11px] font-pixel font-bold text-ruby-shadow shadow-[0_1.5px_0_#3B2218]">
+                          <Heart className="size-3.5 fill-current" /> Vitalitas Kuis
+                        </span>
+                        <span className="text-[11px] font-bold text-choco-600">
+                          {heartsFull ? "Nyawa Kamu Penuh" : `${hearts}/${MAX_HEARTS} Nyawa Tersisa`}
+                        </span>
+                      </div>
+                      {/* Hearts Meter Indicator */}
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: MAX_HEARTS }).map((_, i) => (
+                          <Heart
+                            key={i}
+                            className={`size-4 transition-transform ${
+                              i < hearts
+                                ? "text-danger fill-current scale-100"
+                                : "text-choco-900/30 scale-90"
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <h3 className="text-xl sm:text-2xl font-pixel font-bold text-choco-900 tracking-tight">
+                      Isi Ulang 5 Nyawa Penuh
+                    </h3>
+                    <p className="mt-2 text-xs md:text-sm font-semibold leading-relaxed text-choco-700 max-w-xl">
+                      Salah menjawab saat kuis? Pulihkan 5 nyawa penuh sekaligus agar kamu bisa langsung melanjutkan rute tanpa menunggu waktu jeda.
+                    </p>
+                  </div>
+
+                  {/* Isi nyawa GRATIS (kuota harian: 2x biasa, 4x supporter) */}
+                  <div className="mt-4 rounded-2xl border-2 border-choco-900/15 bg-cream p-3.5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <Heart className="size-3.5 text-candy-700" />
+                          <span className="font-pixel text-xs font-black text-choco-900">
+                            Isi nyawa gratis
+                          </span>
+                          {freeQuota?.isSupporter && (
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-gradient-to-b from-coin-fill to-coin-fill-deep px-1.5 py-0.5 text-[10px] font-bold text-coin-ink-deep border border-coin-shadow">
+                              <Crown className="size-2.5" />
+                              4×
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-0.5 text-[11px] font-semibold text-choco-600">
+                          {!freeQuota
+                            ? "Memeriksa kuota…"
+                            : !freeQuota.authenticated
+                              ? "Masuk dulu untuk pakai kuota gratis."
+                              : freeQuota.remaining > 0
+                                ? `Sisa ${freeQuota.remaining}× hari ini (${freeQuota.used}/${freeQuota.limit})`
+                                : `Kuota habis (${freeQuota.used}/${freeQuota.limit}). Besok bisa lagi.`}
+                        </p>
+                        <p className="mt-1 text-[10px] font-semibold text-choco-500">
+                          Kuota {freeQuota?.limit ?? 2}× per hari (Supporter 4×), reset tengah malam WIB (00.00).
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={
+                          heartsFull ||
+                          freeBusy ||
+                          !freeQuota ||
+                          !freeQuota.authenticated ||
+                          freeQuota.remaining <= 0
+                        }
+                        onClick={async () => {
+                          if (!freeQuota?.authenticated) {
+                            window.location.href = "/masuk";
+                            return;
+                          }
+                          setFreeBusy(true);
+                          const res = await rpcRefillHeartsFree();
+                          setFreeBusy(false);
+                          if (res.ok) {
+                            playBuy();
+                            flash("Nyawa terisi penuh! 🎉");
+                            setFreeQuota(await rpcGetFreeRefillQuota());
+                            await syncProgressFromServer();
+                          } else {
+                            playDeny();
+                            flash(res.error || "Gagal mengisi nyawa.");
+                          }
+                        }}
+                        className="inline-flex items-center justify-center min-h-11 rounded-full border-2 border-choco-900 px-4 py-2 text-xs font-pixel font-bold transition-all cursor-pointer bg-gradient-to-b from-mint to-ok-shadow text-white shadow-[0_3px_0_#3B2218] hover:brightness-105 active:translate-y-[2px] active:shadow-none disabled:bg-disabled disabled:text-choco-600 disabled:opacity-60 disabled:shadow-none"
+                      >
+                        {heartsFull
+                          ? "Nyawa Penuh"
+                          : freeBusy
+                            ? "Mengisi…"
+                            : !freeQuota?.authenticated
+                              ? "Masuk dulu"
+                              : freeQuota.remaining <= 0
+                                ? "Kuota Habis"
+                                : "Isi Gratis →"}
+                      </button>
+                    </div>
+                    {freeQuota?.authenticated && !freeQuota.isSupporter && (
+                      <Link
+                        to="/supporter"
+                        className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-candy-700 hover:text-candy-800 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-candy-600"
+                      >
+                        <Crown className="size-3" />
+                        Jadi Supporter untuk 4× sehari →
+                      </Link>
+                    )}
+                  </div>
+
+                  <div className="mt-6 flex flex-wrap items-center justify-between gap-4 pt-4 border-t-2 border-choco-900/15">
+                    <div className="flex items-center gap-2">
+                      <div className="size-8 rounded-xl border-2 border-choco-900 bg-lemon flex items-center justify-center shadow-[0_1.5px_0_#3B2218]">
+                        <img src="/props/star.png" alt="Koin" className="size-5 object-contain pixelated" />
+                      </div>
+                      <span className="font-pixel text-lg font-bold text-choco-900">
+                        {HEART_REFILL_COST} Koin
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={heartsFull || gems < HEART_REFILL_COST}
+                      onClick={() => {
+                        if (refillHearts()) {
+                          playBuy();
+                          flash("Semua 5 nyawa berhasil dipulihkan!");
+                          void rpcRefillHearts().then((ok) => {
+                            if (ok) void syncProgressFromServer();
+                          });
+                        } else {
+                          playDeny();
+                        }
+                      }}
+                      className="inline-flex items-center justify-center min-h-11 rounded-full border-2 border-candy-600 px-5 py-2.5 text-xs md:text-sm font-pixel font-bold transition-all cursor-pointer bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 shadow-[0_3px_0_#B01F62] hover:brightness-105 active:translate-y-[2px] active:shadow-none disabled:bg-disabled disabled:text-choco-600 disabled:opacity-60 disabled:shadow-none"
+                    >
+                      {heartsFull ? "Nyawa Penuh" : gems < HEART_REFILL_COST ? "Koin Kurang" : "Isi Ulang Sekarang →"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Side Bento Card: Pelindung Streak (Spans 1 Col) */}
+                <div className="flex flex-col justify-between rounded-3xl border-2 border-choco-900 bg-gradient-to-b from-flame-soft via-flame-fill to-flame-fill-deep p-5 shadow-[0_6px_0_#3B2218]">
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="size-12 rounded-2xl border-2 border-choco-900 bg-white flex items-center justify-center shadow-[0_2px_0_#3B2218]">
+                        <img src="/props/shield.png" alt="Pelindung Streak" className="size-7 object-contain pixelated" />
+                      </div>
+                      <span className={`px-2.5 py-0.5 rounded-full border-2 border-choco-900 text-[10px] font-pixel font-bold shadow-[0_1.5px_0_#3B2218] ${
+                        freeze > 0 ? "bg-lemon text-choco-900" : "bg-white text-choco-700"
+                      }`}>
+                        {freeze > 0 ? "Aktif Melindungi" : "Siaga"}
+                      </span>
+                    </div>
+
+                    <h3 className="text-lg font-pixel font-bold text-choco-900">
+                      Pelindung Streak
+                    </h3>
+                    <p className="mt-1.5 text-xs font-semibold leading-relaxed text-choco-700">
+                      Lagi sibuk lembur atau nongkrong? Pasang pelindung biar streak rantai kamu gak putus kalau bolos sehari.
+                    </p>
+
+                    <div className="mt-3 text-xs font-pixel font-bold text-choco-900 bg-white/80 p-2 rounded-xl border-2 border-choco-900/15 shadow-[0_1.5px_0_#3B2218]">
+                      Dimiliki: <strong>{freeze} Pelindung</strong>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex items-center justify-between pt-4 border-t-2 border-choco-900/15">
+                    <div className="flex items-center gap-1.5">
+                      <img src="/props/star.png" alt="Koin" className="size-4 object-contain pixelated" />
+                      <span className="font-pixel text-base font-bold text-choco-900">
+                        {FREEZE_COST} Koin
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={freeze > 0 || gems < FREEZE_COST}
+                      onClick={() => {
+                        if (buyFreeze()) {
+                          playBuy();
+                          flash("Pelindung Streak berhasil dibeli!");
+                          void rpcBuyFreeze().then((ok) => {
+                            if (ok) void syncProgressFromServer();
+                          });
+                        } else {
+                          playDeny();
+                        }
+                      }}
+                      className="inline-flex items-center justify-center min-h-11 rounded-full border-2 border-candy-600 px-4 py-2 text-xs font-pixel font-bold transition-all cursor-pointer bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 shadow-[0_3px_0_#B01F62] hover:brightness-105 active:translate-y-[2px] active:shadow-none disabled:bg-disabled disabled:text-choco-600 disabled:opacity-60 disabled:shadow-none"
+                    >
+                      {freeze > 0 ? "Sudah Aktif" : gems < FREEZE_COST ? "Koin Kurang" : "Beli Pelindung →"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Exclusive Wardrobe Banner */}
+            <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-b from-blush-50 via-blush-fill to-blush-200 border-2 border-choco-900 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-[0_6px_0_#3B2218]">
+              <div className="flex items-center gap-4 text-center sm:text-left">
+                <div className="size-14 rounded-2xl bg-white border-2 border-choco-900 shadow-[0_2px_0_#3B2218] flex items-center justify-center shrink-0">
+                  <Sparkles className="size-7 text-candy-500" />
+                </div>
+                <div>
+                  <h3 className="font-pixel font-bold text-base sm:text-lg text-choco-900">
+                    Koleksi Pakaian & Aksesori Blobi
+                  </h3>
+                  <p className="text-xs sm:text-sm text-choco-700 mt-0.5 leading-relaxed font-sans font-semibold">
+                    Semua baju, topi, kacamata, dan aksesori Blobi tersedia di sini. Coba atau pasang langsung pada karaktermu!
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleModeChange("wardrobe")}
+                className="shrink-0 px-5 py-2 min-h-11 rounded-full bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 font-pixel font-bold text-xs border-2 border-candy-600 shadow-[0_3px_0_#B01F62] flex items-center gap-1.5 cursor-pointer hover:brightness-105 active:translate-y-[2px] active:shadow-none transition-all"
+              >
+                <span>Buka Ruang Ganti Blobi →</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ═══════════════════════════════════════════════════════ */}
+        {/* MODE 2: RUANG GANTI BLOBI (Wardrobe & Dressing View)   */}
+        {/* ═══════════════════════════════════════════════════════ */}
+        {mode === "wardrobe" && (
+          <div className="space-y-6">
+            {/* Header Ruang Ganti */}
+            <div className="hidden sm:block p-4 sm:p-6 rounded-3xl bg-gradient-to-b from-white via-cream-fill to-cream-fill-deep border-2 border-choco-900 shadow-[0_4px_0_#3B2218] space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h1 className="font-pixel font-bold text-2xl sm:text-3xl text-choco-900 tracking-tight flex items-center gap-2">
+                    <Sparkles className="size-6 sm:size-7 text-candy-500" />
+                    <span>Ruang Ganti Blobi</span>
+                  </h1>
+                  <p className="text-xs sm:text-sm font-semibold text-choco-700 mt-1 leading-relaxed font-sans">
+                    Atur gaya dan padukan penampilan Blobi. Coba berbagai pakaian yang sudah kamu miliki, atau coba aksesori baru langsung pada karakter!
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="px-3 py-1 rounded-full bg-candy-100 border-2 border-choco-900 text-candy-700 text-xs font-pixel font-bold shadow-[0_2px_0_#3B2218]">
+                    {ownedCount}/{totalCount} Koleksi
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange("shop")}
+                    className="px-4 py-2 min-h-11 rounded-full bg-lemon border-2 border-choco-900 text-choco-900 text-xs font-pixel font-bold hover:bg-lemon-deep shadow-[0_3px_0_#3B2218] transition-all flex items-center gap-1 cursor-pointer active:translate-y-0.5"
+                  >
+                    <Store className="size-3.5" />
+                    <span className="hidden sm:inline">Toko</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 2-Column Layout: Left Stage vs Right Wardrobe Closet */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* LEFT COLUMN: Panggung Busana Blobi (5 cols) */}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="p-6 rounded-3xl flex flex-col items-center text-center bg-gradient-to-b from-white via-cream-fill to-cream-fill-deep border-2 border-choco-900 shadow-[0_6px_0_#3B2218]">
+                  <div className="w-full flex items-center justify-between pb-3 border-b-2 border-choco-900/15">
+                    <span className="text-xs font-pixel font-bold text-choco-900">Panggung Busana</span>
+                    <span className="text-[11px] font-semibold text-choco-600">
+                      {isWearingSomething ? "Tampil Bergaya" : "Gaya Standar"}
+                    </span>
+                  </div>
+
+                  {/* Circular Blobi Pedestal */}
+                  <div className="py-6 flex items-center justify-center relative">
+                    <div className="p-7 rounded-full bg-gradient-to-b from-blush-50 to-blush-100 border-2 border-choco-900 shadow-[0_4px_0_#3B2218] transition-transform hover:scale-105">
+                      <Mascot mood={blobiMood} size={160} worn={activeWorn} />
+                    </div>
+                  </div>
+
+                  {/* Blobi Mood React Buttons */}
+                  <div className="w-full space-y-2 pt-2 border-t-2 border-candy-100">
+                    <div className="text-[11px] font-bold text-choco-600">Reaksi Blobi:</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(
+                        [
+                          { mood: "wave" as const, label: "Sapa", icon: Hand },
+                          { mood: "proud" as const, label: "Bangga", icon: Smile },
+                          { mood: "celebrate" as const, label: "Rayakan", icon: PartyPopper },
+                          { mood: "idle" as const, label: "Santai", icon: Coffee },
+                        ] as const
+                      ).map(({ mood, label, icon: Icon }) => (
+                        <button
+                          key={mood}
+                          type="button"
+                          onClick={() => setBlobiMood(mood)}
+                          className={`flex items-center justify-center gap-2 px-3 py-2 min-h-11 rounded-xl text-xs font-bold select-none transition-[transform,box-shadow,background-color,border-color,color] cursor-pointer active:translate-y-[1px] ${
+                            blobiMood === mood
+                              ? "bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 shadow-[0_3px_0_#B01F62] border-2 border-candy-600"
+                              : "bg-white text-choco-700 hover:bg-candy-50 border-2 border-choco-900 shadow-[0_2px_0_#3B2218]"
+                          }`}
+                        >
+                          <Icon className="size-4 shrink-0" />
+                          <span>{label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Currently Worn Breakdown */}
+                  <div className="w-full mt-4 p-3.5 rounded-2xl bg-white border-2 border-choco-900/15 shadow-[0_2.5px_0_#3B2218] text-left space-y-2">
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-choco-600 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <span>Aksesori Aktif:</span>
+                        {previewWorn && (
+                          <span className="px-1.5 py-0.5 rounded-full bg-lemon border-2 border-lemon-deep text-[9px] font-bold text-choco-900 shadow-[0_1px_0_#D9A400]">
+                            Mode Coba
+                          </span>
+                        )}
+                      </span>
+                      {isWearingSomething && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            equipOutfit(null);
+                            setPreviewWorn(null);
+                            playUnequip();
+                            flash("Semua aksesori Blobi telah dilepas.");
+                          }}
+                          className="text-[10px] font-bold text-ruby-shadow hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <RotateCcw className="size-3" />
+                          <span>Lepas Semua</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                      {SLOTS.map((slot) => {
+                        const accId = activeWorn[slot];
+                        const acc = accId ? ACCESSORIES.find((a) => a.id === accId) : null;
+                        const isPreview = previewWorn && previewWorn[slot] === accId;
+                        return (
+                          <div
+                            key={slot}
+                            className={`p-2 rounded-xl border-2 transition-all ${
+                              isPreview
+                                ? "bg-coin-fill border-lemon-deep shadow-[0_2px_0_#D9A400]"
+                                : acc
+                                ? "bg-candy-50 border-candy-600 shadow-[0_2px_0_#B01F62]"
+                                : "bg-stone-50 border-stone-200"
+                            }`}
+                          >
+                            <span className="block text-[10px] font-bold text-choco-600">
+                              {SLOT_LABEL[slot]}
+                            </span>
+                            <strong className="block text-[10px] sm:text-[11px] leading-tight text-choco-900 line-clamp-2 mt-0.5 min-h-[26px] flex items-center justify-center font-bold">
+                              {acc ? acc.name : "Polos"}
+                            </strong>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* RIGHT COLUMN: Lemari Pakaian & Koleksi (7 cols) */}
+              <div className="lg:col-span-7 space-y-4">
+                <div className="p-5 rounded-3xl bg-gradient-to-b from-white via-cream-fill to-cream-fill-deep border-2 border-choco-900 shadow-[0_6px_0_#3B2218] space-y-4">
+                  {/* Closet Controls: Scope Toggle + Slot Filter */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b-2 border-choco-900/15">
+                    {/* Scope: Koleksi Dimiliki vs Katalog Lengkap — Arena pill dock */}
+                    <div className="w-full sm:w-auto inline-flex p-1.5 rounded-2xl border-2 border-choco-900/20 bg-gradient-to-b from-white via-cream-fill to-cream-fill-deep shadow-[0_4px_0_#3B2218] gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setWardrobeScope("owned")}
+                        aria-pressed={wardrobeScope === "owned"}
+                        className={`flex-1 sm:flex-initial px-3 py-1 min-h-11 rounded-xl border-2 text-xs font-pixel font-bold cursor-pointer text-center transition-all whitespace-nowrap ${
+                          wardrobeScope === "owned"
+                            ? "border-candy-600 bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 shadow-[0_3px_0_#B01F62] hover:brightness-105 hover:-translate-y-0.5 active:translate-y-[3px] active:shadow-none"
+                            : "border-transparent text-choco-600 hover:text-choco-900 hover:border-choco-900/20 hover:bg-candy-50"
+                        }`}
+                      >
+                        Koleksi Dimiliki ({ownedCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWardrobeScope("all")}
+                        aria-pressed={wardrobeScope === "all"}
+                        className={`flex-1 sm:flex-initial px-3 py-1 min-h-11 rounded-xl border-2 text-xs font-pixel font-bold cursor-pointer text-center transition-all whitespace-nowrap ${
+                          wardrobeScope === "all"
+                            ? "border-candy-600 bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 shadow-[0_3px_0_#B01F62] hover:brightness-105 hover:-translate-y-0.5 active:translate-y-[3px] active:shadow-none"
+                            : "border-transparent text-choco-600 hover:text-choco-900 hover:border-choco-900/20 hover:bg-candy-50"
+                        }`}
+                      >
+                        Katalog Coba ({totalCount})
+                      </button>
+                    </div>
+
+                    {/* Slot Filter */}
+                    <div className="w-full min-w-0 flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1.5 -mx-1 px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      <button
+                        type="button"
+                        onClick={() => setWardrobeSlot("all")}
+                        aria-pressed={wardrobeSlot === "all"}
+                        className={`shrink-0 px-4 py-1.5 min-h-11 inline-flex items-center rounded-full text-xs font-pixel font-bold whitespace-nowrap cursor-pointer transition-[transform,box-shadow,background-color,border-color,color] active:translate-y-[1px] ${
+                          wardrobeSlot === "all"
+                            ? "bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 border-2 border-candy-600 shadow-[0_2px_0_#B01F62]"
+                            : "bg-cream text-choco-600 border-2 border-choco-900 shadow-[0_2px_0_#3B2218] hover:bg-candy-100 hover:text-choco-900"
+                        }`}
+                      >
+                        Semua
+                      </button>
+                      {SLOTS.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setWardrobeSlot(s)}
+                          aria-pressed={wardrobeSlot === s}
+                          className={`shrink-0 px-4 py-1.5 min-h-11 inline-flex items-center rounded-full text-xs font-pixel font-bold whitespace-nowrap cursor-pointer transition-[transform,box-shadow,background-color,border-color,color] active:translate-y-[1px] ${
+                            wardrobeSlot === s
+                              ? "bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 border-2 border-candy-600 shadow-[0_2px_0_#B01F62]"
+                              : "bg-cream text-choco-600 border-2 border-choco-900 shadow-[0_2px_0_#3B2218] hover:bg-candy-100 hover:text-choco-900"
+                          }`}
+                        >
+                          {SLOT_LABEL[s]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Empty State if owned is 0 */}
+                  {wardrobeItems.length === 0 && wardrobeScope === "owned" && (
+                    <div className="py-12 text-center space-y-3">
+                      <div className="size-16 mx-auto rounded-full bg-lemon/30 border-2 border-choco-900 shadow-[0_2px_0_#3B2218] flex items-center justify-center text-choco-900">
+                        <Shirt className="size-8" />
+                      </div>
+                      <h3 className="font-pixel font-bold text-base text-choco-900">
+                        Belum Ada Koleksi di Sini
+                      </h3>
+                      <p className="text-xs text-choco-600 max-w-sm mx-auto font-sans">
+                        Kamu belum mengoleksi pakaian untuk kategori ini. Buka katalog lengkap untuk mencoba dan mendapatkan pakaian baru!
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setWardrobeScope("all")}
+                        className="px-4 py-2 min-h-11 rounded-[14px] bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 font-pixel font-bold text-xs border-2 border-candy-600 shadow-[0_3px_0_#B01F62] cursor-pointer active:translate-y-[1px]"
+                      >
+                        Lihat Katalog Lengkap ({totalCount})
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Wardrobe Items Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {wardrobeItems.map((acc) => {
+                      const owned = outfits.includes(acc.id);
+                      const isEquipped = worn[acc.slot] === acc.id;
+                      const isPreviewing = previewWorn && previewWorn[acc.slot] === acc.id;
+
+                      return (
+                        <div
+                          key={acc.id}
+                          className={`p-3.5 rounded-[18px] border-2 flex flex-col justify-between transition-[transform,box-shadow,background-color,border-color,color] ${
+                            isEquipped
+                              ? "bg-cream border-2 border-mint shadow-[0_4px_0_#1E9E78]"
+                              : isPreviewing
+                              ? "bg-candy-50 border-2 border-choco-900 shadow-[0_4px_0_#3B2218]"
+                              : owned
+                              ? "bg-cream border-2 border-choco-900 shadow-[0_4px_0_#3B2218] hover:translate-y-[-1px]"
+                              : "bg-cream border-2 border-dashed border-choco-600 shadow-[0_2px_0_rgba(59,34,24,0.08)]"
+                          }`}
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-pixel font-bold text-choco-600">
+                                {SLOT_LABEL[acc.slot]}
+                              </span>
+                              {isEquipped ? (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-pixel font-bold text-mint-deep bg-white px-2 py-0.5 rounded-full border border-mint">
+                                  <Check className="size-3" /> Dipakai
+                                </span>
+                              ) : isPreviewing ? (
+                                <span className="text-[10px] font-pixel font-bold text-choco-900 bg-lemon px-2 py-0.5 rounded-full border border-choco-900">
+                                  Dicoba
+                                </span>
+                              ) : !owned ? (
+                                <span className="text-[10px] font-pixel font-bold text-choco-600 bg-candy-100 px-2.5 py-0.5 rounded-full border-2 border-choco-900 shadow-[0_2px_0_#3B2218]">
+                                  Belum Punya
+                                </span>
+                              ) : isLimitedItem(acc.id) ? (
+                                <span className="text-[10px] font-pixel font-bold text-leaf-shadow bg-leaf-fill px-2 py-0.5 rounded-full border border-choco-900">
+                                  Limited
+                                </span>
+                              ) : null}
+                            </div>
+
+                            {/* Pixel Art Accessory Preview */}
+                            <div className="h-14 flex items-center justify-center p-1.5 rounded-xl bg-white border-2 border-choco-900">
+                              <img
+                                src={acc.src}
+                                alt={acc.name}
+                                className="max-h-11 max-w-11 object-contain"
+                                style={{ imageRendering: "pixelated" }}
+                              />
+                            </div>
+
+                            <div>
+                              <div className="font-pixel font-bold text-xs text-choco-900 line-clamp-2 leading-tight">
+                                {acc.name}
+                              </div>
+                              <div className="text-[10px] font-medium text-choco-600 line-clamp-2 leading-tight mt-0.5 font-sans">
+                                {acc.blurb}
+                              </div>
+                              {isLimitedItem(acc.id) && (
+                                <div className="mt-1 text-[9px] font-pixel font-bold text-leaf-shadow bg-leaf-soft px-1.5 py-0.5 rounded border border-leaf-line inline-block">
+                                  Edisi Kolektor (Hanya dari Undian)
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Wardrobe Action Buttons */}
+                          <div className="mt-3 pt-2 border-t-2 border-choco-900/20 flex items-center justify-between gap-1.5">
+                            {owned ? (
+                              isEquipped ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    equipOutfit(acc.id);
+                                    setPreviewWorn(null);
+                                    playUnequip();
+                                    flash(`"${acc.name}" dilepas dari Blobi.`);
+                                  }}
+                                  className="w-full py-1 min-h-11 rounded-[10px] bg-cream border-2 border-choco-900 text-[11px] font-pixel font-bold text-ruby-shadow hover:bg-candy-50 shadow-[0_2px_0_#3B2218] active:translate-y-[1px] active:shadow-none transition-[transform,box-shadow,background-color,border-color,color] cursor-pointer"
+                                >
+                                  Lepas
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    equipOutfit(acc.id);
+                                    setPreviewWorn(null);
+                                    playEquip();
+                                    flash(`"${acc.name}" dipasang pada Blobi!`);
+                                  }}
+                                  className="w-full py-1 min-h-11 rounded-[10px] bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 border-2 border-candy-600 text-[11px] font-pixel font-bold hover:brightness-105 shadow-[0_2px_0_#B01F62] active:translate-y-[1px] active:shadow-none transition-[transform,box-shadow,background-color,border-color,color] cursor-pointer"
+                                >
+                                  Pakai
+                                </button>
+                              )
+                            ) : (
+                              <div className="w-full flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (isPreviewing) {
+                                      setPreviewWorn((prev) => {
+                                        if (!prev) return null;
+                                        const next = { ...prev };
+                                        delete next[acc.slot];
+                                        return Object.keys(next).length > 0 ? next : null;
+                                      });
+                                      playUnequip();
+                                      flash(`"${acc.name}" dicopot dari percobaan.`);
+                                    } else {
+                                      setPreviewWorn((prev) => ({
+                                        ...(prev ?? worn),
+                                        [acc.slot]: acc.id,
+                                      }));
+                                      playEquip();
+                                      flash(`Mencoba "${acc.name}" pada Blobi!`);
+                                    }
+                                  }}
+                                  className={`flex-1 py-1 rounded-[10px] text-[10px] font-pixel font-bold cursor-pointer transition-[transform,box-shadow,background-color,border-color,color] active:translate-y-[1px] ${
+                                    isPreviewing
+                                      ? "bg-white border-2 border-danger text-ruby-shadow hover:bg-candy-50 shadow-[0_1px_0_#3B2218]"
+                                      : "bg-candy-100 border-2 border-choco-900 text-candy-700 hover:bg-candy-200 shadow-[0_2px_0_#3B2218]"
+                                  }`}
+                                >
+                                  {isPreviewing ? "Lepas" : "Coba"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirm(acc)}
+                                  className="flex-1 py-1 min-h-11 rounded-[10px] bg-lemon text-choco-900 border-2 border-choco-900 text-[10px] font-pixel font-bold hover:bg-lemon-deep shadow-[0_2px_0_#3B2218] active:translate-y-[1px] cursor-pointer"
+                                >
+                                  Beli Item →
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Purchase Confirmation Dialog */}
+        {confirm && (
+          <Dialog
+            title={`Beli ${confirm.name}?`}
+            open={!!confirm}
+            onClose={() => setConfirm(null)}
+          >
+            <div className="space-y-4 pt-2">
+              <div className="p-4 rounded-[18px] bg-cream border-2 border-choco-900 shadow-[0_3px_0_#3B2218] flex items-center gap-4">
+                <div className="size-16 rounded-[14px] bg-white border-2 border-choco-900 flex items-center justify-center p-2 shrink-0 shadow-[0_2px_0_#3B2218]">
+                  <img
+                    src={confirm.src}
+                    alt={confirm.name}
+                    className="max-h-12 max-w-12 object-contain"
+                    style={{ imageRendering: "pixelated" }}
+                  />
+                </div>
+                <div>
+                  <span className="text-[10px] font-pixel font-bold uppercase tracking-wider text-choco-600 px-2 py-0.5 rounded-full bg-candy-100 border border-choco-900">
+                    {SLOT_LABEL[confirm.slot]}
+                  </span>
+                  <h4 className="font-pixel font-bold text-sm text-choco-900 mt-1">{confirm.name}</h4>
+                  <p className="text-xs text-choco-600 mt-0.5 leading-relaxed">{confirm.blurb}</p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-[16px] bg-lemon/20 border-2 border-choco-900 flex items-center justify-between shadow-[0_2px_0_#3B2218]">
+                <span className="text-xs font-pixel font-bold text-choco-900">Harga item:</span>
+                <span className="flex items-center gap-1.5 text-sm font-pixel font-bold text-choco-900">
+                  <BlockStamp size={14} className="text-lemon" />
+                  {confirm.cost} Koin
+                </span>
+              </div>
+
+              <div className="text-xs text-choco-600 text-center font-sans">
+                Setelah dibeli, pakaian ini akan langsung tersimpan di <strong className="text-choco-900 font-pixel">Ruang Ganti Blobi</strong> kamu.
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <TactileButton
+                  variant="secondary"
+                  size="md"
+                  fullWidth
+                  onClick={() => setConfirm(null)}
+                >
+                  Kembali
+                </TactileButton>
+                <TactileButton
+                  variant="primary"
+                  size="md"
+                  fullWidth
+                  disabled={gems < confirm.cost}
+                  onClick={() => purchase(confirm)}
+                >
+                  {gems >= confirm.cost ? `Beli Sekarang (${confirm.cost} Koin) →` : "Koin Belum Cukup"}
+                </TactileButton>
+              </div>
+            </div>
+          </Dialog>
+        )}
+      </main>
+    </AppShell>
   );
 }

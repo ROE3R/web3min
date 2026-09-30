@@ -11,19 +11,28 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AboutRouteImport } from './routes/about'
+import { Route as AdminRouteImport } from './routes/admin'
+import { Route as BubbleRouteImport } from './routes/bubble'
 import { Route as CaraRouteImport } from './routes/cara'
+import { Route as DaoRouteImport } from './routes/dao'
 import { Route as IntroRouteImport } from './routes/intro'
 import { Route as KisahRouteImport } from './routes/kisah'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
+import { Route as MasukRouteImport } from './routes/masuk'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as RaffleRouteImport } from './routes/raffle'
+import { Route as RantaiRouteImport } from './routes/rantai'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ShopRouteImport } from './routes/shop'
+import { Route as SupporterRouteImport } from './routes/supporter'
+import { Route as WardrobeRouteImport } from './routes/wardrobe'
 import { Route as BedahCaseIdRouteImport } from './routes/bedah.$caseId'
 import { Route as KisahIndexRouteImport } from './routes/kisah.index'
 import { Route as KisahStoryIdRouteImport } from './routes/kisah.$storyId'
 import { Route as LessonLessonIdRouteImport } from './routes/lesson.$lessonId'
+import { Route as UUsernameRouteImport } from './routes/u.$username'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -35,9 +44,24 @@ const AboutRoute = AboutRouteImport.update({
   path: '/about',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BubbleRoute = BubbleRouteImport.update({
+  id: '/bubble',
+  path: '/bubble',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CaraRoute = CaraRouteImport.update({
   id: '/cara',
   path: '/cara',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DaoRoute = DaoRouteImport.update({
+  id: '/dao',
+  path: '/dao',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IntroRoute = IntroRouteImport.update({
@@ -55,6 +79,11 @@ const LeaderboardRoute = LeaderboardRouteImport.update({
   path: '/leaderboard',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MasukRoute = MasukRouteImport.update({
+  id: '/masuk',
+  path: '/masuk',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OnboardingRoute = OnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
@@ -70,6 +99,16 @@ const ProfileRoute = ProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RaffleRoute = RaffleRouteImport.update({
+  id: '/raffle',
+  path: '/raffle',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RantaiRoute = RantaiRouteImport.update({
+  id: '/rantai',
+  path: '/rantai',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -78,6 +117,16 @@ const SettingsRoute = SettingsRouteImport.update({
 const ShopRoute = ShopRouteImport.update({
   id: '/shop',
   path: '/shop',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SupporterRoute = SupporterRouteImport.update({
+  id: '/supporter',
+  path: '/supporter',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WardrobeRoute = WardrobeRouteImport.update({
+  id: '/wardrobe',
+  path: '/wardrobe',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BedahCaseIdRoute = BedahCaseIdRouteImport.update({
@@ -100,56 +149,88 @@ const LessonLessonIdRoute = LessonLessonIdRouteImport.update({
   path: '/lesson/$lessonId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const UUsernameRoute = UUsernameRouteImport.update({
+  id: '/u/$username',
+  path: '/u/$username',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/admin': typeof AdminRoute
+  '/bubble': typeof BubbleRoute
   '/cara': typeof CaraRoute
+  '/dao': typeof DaoRoute
   '/intro': typeof IntroRoute
   '/kisah': typeof KisahRouteWithChildren
   '/leaderboard': typeof LeaderboardRoute
+  '/masuk': typeof MasukRoute
   '/onboarding': typeof OnboardingRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
+  '/raffle': typeof RaffleRoute
+  '/rantai': typeof RantaiRoute
   '/settings': typeof SettingsRoute
   '/shop': typeof ShopRoute
+  '/supporter': typeof SupporterRoute
+  '/wardrobe': typeof WardrobeRoute
   '/bedah/$caseId': typeof BedahCaseIdRoute
   '/kisah/$storyId': typeof KisahStoryIdRoute
   '/lesson/$lessonId': typeof LessonLessonIdRoute
+  '/u/$username': typeof UUsernameRoute
   '/kisah/': typeof KisahIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/admin': typeof AdminRoute
+  '/bubble': typeof BubbleRoute
   '/cara': typeof CaraRoute
+  '/dao': typeof DaoRoute
   '/intro': typeof IntroRoute
   '/leaderboard': typeof LeaderboardRoute
+  '/masuk': typeof MasukRoute
   '/onboarding': typeof OnboardingRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
+  '/raffle': typeof RaffleRoute
+  '/rantai': typeof RantaiRoute
   '/settings': typeof SettingsRoute
   '/shop': typeof ShopRoute
+  '/supporter': typeof SupporterRoute
+  '/wardrobe': typeof WardrobeRoute
   '/bedah/$caseId': typeof BedahCaseIdRoute
   '/kisah/$storyId': typeof KisahStoryIdRoute
   '/lesson/$lessonId': typeof LessonLessonIdRoute
+  '/u/$username': typeof UUsernameRoute
   '/kisah': typeof KisahIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
+  '/admin': typeof AdminRoute
+  '/bubble': typeof BubbleRoute
   '/cara': typeof CaraRoute
+  '/dao': typeof DaoRoute
   '/intro': typeof IntroRoute
   '/kisah': typeof KisahRouteWithChildren
   '/leaderboard': typeof LeaderboardRoute
+  '/masuk': typeof MasukRoute
   '/onboarding': typeof OnboardingRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
+  '/raffle': typeof RaffleRoute
+  '/rantai': typeof RantaiRoute
   '/settings': typeof SettingsRoute
   '/shop': typeof ShopRoute
+  '/supporter': typeof SupporterRoute
+  '/wardrobe': typeof WardrobeRoute
   '/bedah/$caseId': typeof BedahCaseIdRoute
   '/kisah/$storyId': typeof KisahStoryIdRoute
   '/lesson/$lessonId': typeof LessonLessonIdRoute
+  '/u/$username': typeof UUsernameRoute
   '/kisah/': typeof KisahIndexRoute
 }
 export interface FileRouteTypes {
@@ -157,68 +238,104 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/about'
+    | '/admin'
+    | '/bubble'
     | '/cara'
+    | '/dao'
     | '/intro'
     | '/kisah'
     | '/leaderboard'
+    | '/masuk'
     | '/onboarding'
     | '/privacy'
     | '/profile'
+    | '/raffle'
+    | '/rantai'
     | '/settings'
     | '/shop'
+    | '/supporter'
+    | '/wardrobe'
     | '/bedah/$caseId'
     | '/kisah/$storyId'
     | '/lesson/$lessonId'
+    | '/u/$username'
     | '/kisah/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/about'
+    | '/admin'
+    | '/bubble'
     | '/cara'
+    | '/dao'
     | '/intro'
     | '/leaderboard'
+    | '/masuk'
     | '/onboarding'
     | '/privacy'
     | '/profile'
+    | '/raffle'
+    | '/rantai'
     | '/settings'
     | '/shop'
+    | '/supporter'
+    | '/wardrobe'
     | '/bedah/$caseId'
     | '/kisah/$storyId'
     | '/lesson/$lessonId'
+    | '/u/$username'
     | '/kisah'
   id:
     | '__root__'
     | '/'
     | '/about'
+    | '/admin'
+    | '/bubble'
     | '/cara'
+    | '/dao'
     | '/intro'
     | '/kisah'
     | '/leaderboard'
+    | '/masuk'
     | '/onboarding'
     | '/privacy'
     | '/profile'
+    | '/raffle'
+    | '/rantai'
     | '/settings'
     | '/shop'
+    | '/supporter'
+    | '/wardrobe'
     | '/bedah/$caseId'
     | '/kisah/$storyId'
     | '/lesson/$lessonId'
+    | '/u/$username'
     | '/kisah/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AboutRoute: typeof AboutRoute
+  AdminRoute: typeof AdminRoute
+  BubbleRoute: typeof BubbleRoute
   CaraRoute: typeof CaraRoute
+  DaoRoute: typeof DaoRoute
   IntroRoute: typeof IntroRoute
   KisahRoute: typeof KisahRouteWithChildren
   LeaderboardRoute: typeof LeaderboardRoute
+  MasukRoute: typeof MasukRoute
   OnboardingRoute: typeof OnboardingRoute
   PrivacyRoute: typeof PrivacyRoute
   ProfileRoute: typeof ProfileRoute
+  RaffleRoute: typeof RaffleRoute
+  RantaiRoute: typeof RantaiRoute
   SettingsRoute: typeof SettingsRoute
   ShopRoute: typeof ShopRoute
+  SupporterRoute: typeof SupporterRoute
+  WardrobeRoute: typeof WardrobeRoute
   BedahCaseIdRoute: typeof BedahCaseIdRoute
   LessonLessonIdRoute: typeof LessonLessonIdRoute
+  UUsernameRoute: typeof UUsernameRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -237,11 +354,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AboutRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/bubble': {
+      id: '/bubble'
+      path: '/bubble'
+      fullPath: '/bubble'
+      preLoaderRoute: typeof BubbleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/cara': {
       id: '/cara'
       path: '/cara'
       fullPath: '/cara'
       preLoaderRoute: typeof CaraRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dao': {
+      id: '/dao'
+      path: '/dao'
+      fullPath: '/dao'
+      preLoaderRoute: typeof DaoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/intro': {
@@ -265,6 +403,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LeaderboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/masuk': {
+      id: '/masuk'
+      path: '/masuk'
+      fullPath: '/masuk'
+      preLoaderRoute: typeof MasukRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/onboarding': {
       id: '/onboarding'
       path: '/onboarding'
@@ -286,6 +431,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/raffle': {
+      id: '/raffle'
+      path: '/raffle'
+      fullPath: '/raffle'
+      preLoaderRoute: typeof RaffleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rantai': {
+      id: '/rantai'
+      path: '/rantai'
+      fullPath: '/rantai'
+      preLoaderRoute: typeof RantaiRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -298,6 +457,20 @@ declare module '@tanstack/react-router' {
       path: '/shop'
       fullPath: '/shop'
       preLoaderRoute: typeof ShopRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/supporter': {
+      id: '/supporter'
+      path: '/supporter'
+      fullPath: '/supporter'
+      preLoaderRoute: typeof SupporterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wardrobe': {
+      id: '/wardrobe'
+      path: '/wardrobe'
+      fullPath: '/wardrobe'
+      preLoaderRoute: typeof WardrobeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/bedah/$caseId': {
@@ -328,6 +501,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LessonLessonIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/u/$username': {
+      id: '/u/$username'
+      path: '/u/$username'
+      fullPath: '/u/$username'
+      preLoaderRoute: typeof UUsernameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -346,17 +526,26 @@ const KisahRouteWithChildren = KisahRoute._addFileChildren(KisahRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AboutRoute: AboutRoute,
+  AdminRoute: AdminRoute,
+  BubbleRoute: BubbleRoute,
   CaraRoute: CaraRoute,
+  DaoRoute: DaoRoute,
   IntroRoute: IntroRoute,
   KisahRoute: KisahRouteWithChildren,
   LeaderboardRoute: LeaderboardRoute,
+  MasukRoute: MasukRoute,
   OnboardingRoute: OnboardingRoute,
   PrivacyRoute: PrivacyRoute,
   ProfileRoute: ProfileRoute,
+  RaffleRoute: RaffleRoute,
+  RantaiRoute: RantaiRoute,
   SettingsRoute: SettingsRoute,
   ShopRoute: ShopRoute,
+  SupporterRoute: SupporterRoute,
+  WardrobeRoute: WardrobeRoute,
   BedahCaseIdRoute: BedahCaseIdRoute,
   LessonLessonIdRoute: LessonLessonIdRoute,
+  UUsernameRoute: UUsernameRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

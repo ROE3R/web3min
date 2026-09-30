@@ -1,23 +1,72 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useProgress } from "@/lib/store";
+import { useProgress, markHydrated } from "@/lib/store";
+import { supabase } from "@/lib/supabase";
+import { syncProgressFromServer } from "@/lib/server-sync";
 import { BootScreen } from "@/components/boot-screen";
 
 function applyMotion(on: boolean) {
   if (typeof document === "undefined") return;
   const prefer = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  document.documentElement.classList.toggle("reduce-motion", on || prefer);
+  const isReduced = on || prefer;
+  document.documentElement.classList.toggle("reduce-motion", isReduced);
+  document.documentElement.dataset.motion = isReduced ? "reduced" : "full";
 }
 
+/**
+ * Boots the persisted store WITHOUT hiding the page.
+ *
+ * The store uses `skipHydration`, so the first render (server + client) already
+ * agrees on defaults — no hydration mismatch. The old gate swapped the whole tree
+ * for <BootScreen /> until rehydration finished, which left crawlers with a
+ * 72-character body. Now real content ships in the initial HTML and the boot
+ * screen is just an overlay that lifts once storage is read.
+ */
 export function HydrationGate({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    void Promise.resolve(useProgress.persist.rehydrate()).then(() => {
-      useProgress.getState().tick();
-      applyMotion(useProgress.getState().reduceMotion);
+    let mounted = true;
+    let hydrated = false;
+    const finish = () => {
+      if (!mounted || hydrated) return;
+      hydrated = true;
+      try {
+        const s = useProgress.getState();
+        s.tick();
+        applyMotion(s.reduceMotion);
+      } catch {}
+      // Rute yang menjaga akses menunggu sinyal ini sebelum memutuskan redirect.
+      markHydrated();
       setReady(true);
-    });
+    };
+
+    try {
+      const p = useProgress.persist?.rehydrate?.();
+      if (p && typeof p.then === "function") {
+        void p.then(finish).catch(finish);
+      } else {
+        finish();
+      }
+    } catch {
+      finish();
+    }
+
+    // Fallback timer: ensure the app boots even if storage is slow or blocked
+    const timer = window.setTimeout(finish, 1200);
+
+    return () => {
+      mounted = false;
+      window.clearTimeout(timer);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!supabase) return;
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) void syncProgressFromServer();
+    });
+  }, [ready]);
 
   useEffect(() => {
     if (!ready) return;
@@ -31,7 +80,14 @@ export function HydrationGate({ children }: { children: ReactNode }) {
     };
   }, [ready]);
 
-  if (!ready) return <BootScreen />;
-
-  return children;
+  return (
+    <>
+      {children}
+      {!ready && (
+        <div className="fixed inset-0 z-[999]">
+          <BootScreen />
+        </div>
+      )}
+    </>
+  );
 }

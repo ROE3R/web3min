@@ -1,31 +1,73 @@
+import { useEffect } from "react";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
-import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import { HydrationGate } from "@/components/hydration-gate";
+import { OfflineBanner } from "@/components/offline-banner";
+import { setAudioEnabled, primeAudio } from "@/lib/audio";
+import { useProgress } from "@/lib/store";
 import appCss from "../styles.css?url";
+import { buildMeta } from "@/lib/seo";
 
 const APP_NAME = "web3min";
+
+function AudioEffectBridge() {
+  const sound = useProgress((s) => s.sound);
+  const reduceMotion = useProgress((s) => s.reduceMotion);
+
+  useEffect(() => {
+    document.documentElement.dataset.motion = reduceMotion ? "reduced" : "full";
+  }, [reduceMotion]);
+
+  useEffect(() => {
+    setAudioEnabled(sound);
+  }, [sound]);
+
+  useEffect(() => {
+    const boot = () => {
+      void primeAudio();
+    };
+    window.addEventListener("pointerdown", boot, { passive: true });
+    window.addEventListener("touchstart", boot, { passive: true });
+    window.addEventListener("keydown", boot, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", boot);
+      window.removeEventListener("touchstart", boot);
+      window.removeEventListener("keydown", boot);
+    };
+  }, []);
+
+  return null;
+}
+
+const defaultSeo = buildMeta();
 
 export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
-      { title: APP_NAME },
-      { name: "description", content: "Belajar Web3 bareng web3min. Santai, berjenjang, bahasa orang." },
-      { name: "theme-color", content: "#091115" },
+      { name: "theme-color", content: "#E8437F" },
+      ...defaultSeo.meta,
     ],
     links: [
+      // favicon.ico DULU 404 — itu jalur pertama yang dicek Google & browser
+      // lama, dan sebab utamanya web3min.com tampil dengan globe generik di
+      // hasil pencarian. Sekarang ada, multi-ukuran 16/32/48/64.
+      { rel: "icon", href: "/favicon.ico", sizes: "16x16 32x32 48x48 64x64" },
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
+      { rel: "icon", type: "image/png", sizes: "192x192", href: "/icon-192.png" },
+      { rel: "icon", type: "image/png", sizes: "512x512", href: "/icon-512.png" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
         rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap",
+        href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap",
       },
       { rel: "stylesheet", href: appCss },
-      { rel: "manifest", href: "/__grok/manifest.webmanifest" },
-      { rel: "apple-touch-icon", href: "/__grok/icon-180.png" },
+      { rel: "manifest", href: "/manifest.json" },
+      { rel: "apple-touch-icon", href: "/icon-180.png" },
+      { rel: "preload", as: "image", href: "/worlds/u1.webp?v=hd3", type: "image/webp", fetchPriority: "high" },
+      ...defaultSeo.links,
     ],
   }),
   component: RootDocument,
@@ -37,13 +79,14 @@ function RootDocument() {
       <head>
         <HeadContent />
       </head>
-      <body className="bg-bg text-fg font-sans">
-        <PreviewHostBridge />
+      <body className="bg-canvas text-ink-900 font-sans">
         <AuthProvider>
           <HydrationGate>
+            <AudioEffectBridge />
             <Outlet />
           </HydrationGate>
         </AuthProvider>
+        <OfflineBanner />
         <Scripts />
       </body>
     </html>

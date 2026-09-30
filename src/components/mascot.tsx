@@ -18,28 +18,28 @@ const SRC: Record<MascotMood, string> = {
 };
 
 if (typeof window !== "undefined") {
-  (["idle", "wave", "celebrate"] as const).forEach((mood) => {
+  (Object.values(SRC)).forEach((src) => {
     const img = new Image();
-    img.src = SRC[mood];
+    img.src = src;
   });
 }
 
 const PARTICLES: Partial<Record<MascotMood, { ch: string; className: string; delay: string }[]>> = {
   celebrate: [
-    { ch: "✦", className: "left-[10%] top-[12%] text-[0.55em] text-gold", delay: "0s" },
-    { ch: "★", className: "right-[12%] top-[16%] text-[0.65em] text-blob", delay: "0.5s" },
+    { ch: "*", className: "left-[10%] top-[12%] text-[0.7em] text-gold font-black", delay: "0s" },
+    { ch: "*", className: "right-[12%] top-[16%] text-[0.8em] text-blob font-black", delay: "0.5s" },
   ],
-  sad: [{ ch: "💧", className: "left-[24%] top-[38%] text-[0.6em]", delay: "0.3s" }],
+  sad: [{ ch: "•", className: "left-[24%] top-[38%] text-[0.8em] font-bold text-candy-400", delay: "0.3s" }],
   angry: [
-    { ch: "♨", className: "right-[18%] top-[6%] text-[0.5em] text-fg/60", delay: "0.2s" },
-    { ch: "♨", className: "left-[18%] top-[6%] text-[0.5em] text-fg/60", delay: "0.6s" },
+    { ch: "!", className: "right-[18%] top-[6%] text-[0.55em] font-black text-ruby-shadow", delay: "0.2s" },
+    { ch: "!", className: "left-[18%] top-[6%] text-[0.55em] font-black text-ruby-shadow", delay: "0.6s" },
   ],
   sleep: [
-    { ch: "z", className: "right-[18%] top-[14%] text-[0.5em] font-black text-sky", delay: "0s" },
-    { ch: "Z", className: "right-[8%] top-[2%] text-[0.7em] font-black text-sky", delay: "0.8s" },
+    { ch: "z", className: "right-[18%] top-[14%] text-[0.5em] font-black text-choco-600", delay: "0s" },
+    { ch: "Z", className: "right-[8%] top-[2%] text-[0.7em] font-black text-choco-600", delay: "0.8s" },
   ],
   think: [{ ch: "?", className: "right-[12%] top-[8%] text-[0.7em] font-black text-fg", delay: "0s" }],
-  proud: [{ ch: "✦", className: "right-[14%] top-[10%] text-[0.55em] text-gold", delay: "0.2s" }],
+  proud: [{ ch: "*", className: "right-[14%] top-[10%] text-[0.7em] text-gold font-black", delay: "0.2s" }],
 };
 
 type Props = {
@@ -51,6 +51,7 @@ type Props = {
   worn?: Worn;
   lite?: boolean;
   fill?: boolean;
+  hideParticles?: boolean;
 };
 
 export function Mascot({
@@ -61,6 +62,7 @@ export function Mascot({
   worn: wornProp,
   lite = false,
   fill = false,
+  hideParticles = false,
 }: Props) {
   const storeWorn = useProgress((s) => s.worn);
   const worn = wornProp ?? storeWorn;
@@ -93,8 +95,12 @@ export function Mascot({
     };
   }, [lite]);
 
+  const lastPoke = useRef(0);
   const poke = (clientX?: number) => {
     if (!interactive || lite) return;
+    const now = performance.now();
+    if (now - lastPoke.current < 150) return;
+    lastPoke.current = now;
     void primeAudio();
     let pan = 0;
     const box = root.current?.getBoundingClientRect();
@@ -108,7 +114,7 @@ export function Mascot({
   };
 
   const fx = !lite && live;
-  const particles = fx ? (PARTICLES[mood] ?? []) : [];
+  const particles = fx && !hideParticles ? (PARTICLES[mood] ?? []) : [];
   const anim = lite ? "" : squish ? "blobi-squishing" : `blobi-anim-${mood}`;
 
   return (
@@ -117,14 +123,25 @@ export function Mascot({
       className={cn(
         "relative inline-flex items-end justify-center blobi-stage",
         lite && "blobi-lite",
-        interactive && !lite && "cursor-pointer select-none",
+        interactive && !lite && "cursor-pointer select-none touch-manipulation active:scale-95 transition-transform duration-75 min-w-11 min-h-11",
         className,
       )}
       style={fill ? { width: "100%", height: "100%" } : { width: size, height: size }}
-      aria-label="web3min, maskot ikan blob"
-      role={interactive && !lite ? "button" : undefined}
-      tabIndex={interactive && !lite ? 0 : undefined}
+      {...(interactive && !lite
+        ? {
+            role: "button",
+            "aria-label": "Sentuh maskot Blobi",
+            tabIndex: 0,
+          }
+        : {
+            "aria-hidden": "true",
+          })}
       onClick={(e) => poke(e.clientX)}
+      onPointerDown={(e) => {
+        if (e.pointerType === "touch") {
+          poke(e.clientX);
+        }
+      }}
       onKeyDown={(e) => {
         if (!interactive || lite) return;
         if (e.key === "Enter" || e.key === " ") {
@@ -150,7 +167,8 @@ export function Mascot({
           alt=""
           width={size}
           height={size}
-          decoding="async"
+          loading="eager"
+          decoding="sync"
           draggable={false}
           className={cn(
             "pixelated size-full object-contain object-bottom select-none",
@@ -190,20 +208,20 @@ export function SpeechBubble({
         <span
           aria-hidden
           className={cn(
-            "absolute size-3.5 rotate-45 border-b-2 border-l-2 border-line-strong bg-bg",
+            "absolute size-3.5 rotate-45 border-b-2 border-l-2 border-choco-900 bg-cream z-10",
             compact ? "top-4 -left-[7px]" : "top-5 -left-[7px]",
           )}
         />
       ) : (
         <span
           aria-hidden
-          className="absolute -top-2 left-1/2 size-3.5 -translate-x-1/2 rotate-45 border-l-2 border-t-2 border-line-strong bg-bg"
+          className="absolute -top-2 left-1/2 size-3.5 -translate-x-1/2 rotate-45 border-l-2 border-t-2 border-choco-900 bg-cream z-10"
         />
       )}
       <div
         className={cn(
-          "rounded-2xl border-2 border-line-strong bg-bg text-left font-extrabold text-fg shadow-lift",
-          compact ? "px-3 py-2 text-sm leading-5" : "px-4 py-3 text-lg leading-snug",
+          "rounded-[20px] border-2 border-choco-900 bg-cream text-left font-bold text-choco-900 shadow-[0_4px_0_#3B2218]",
+          compact ? "px-3.5 py-2.5 text-xs sm:text-sm leading-snug" : "px-4 py-3 text-sm sm:text-base leading-snug",
         )}
       >
         {children}

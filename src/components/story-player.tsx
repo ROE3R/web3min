@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, Link } from "@tanstack/react-router";
 import { X } from "@/lib/kicon";
 import type { Speaker, Story, StoryBeat } from "@/lib/stories";
 import { SPEAKER_LABEL } from "@/lib/stories";
@@ -9,18 +9,21 @@ import { playComplete } from "@/lib/audio";
 import { cn } from "@/lib/utils";
 import { DuoButton } from "@/components/duo-button";
 import { Mascot, SpeechBubble, TypeLine, type MascotMood } from "@/components/mascot";
+import { rpcCompleteStory, syncProgressFromServer } from "@/lib/server-sync";
+import { BASE_URL } from "@/lib/seo";
 
 const WHO_TONE: Record<Speaker, string> = {
   web3min: "text-primary",
-  penipu: "text-danger",
-  teman: "text-sky",
-  cs: "text-streak",
+  penipu: "text-ruby-shadow",
+  teman: "text-candy-700",
+  cs: "text-flame-500",
   kamu: "text-fg",
 };
 
 export function StoryPlayer({ story }: { story: Story }) {
   const navigate = useNavigate();
   const sound = useProgress((s) => s.sound);
+  const onboarded = useProgress((s) => s.onboarded);
   const completeStory = useProgress((s) => s.completeStory);
   const [i, setI] = useState(0);
   const [typed, setTyped] = useState(false);
@@ -34,6 +37,9 @@ export function StoryPlayer({ story }: { story: Story }) {
     const awarded = completeStory(story.id) ?? { xp: 0, gems: 0 };
     setDone(awarded);
     if (sound) playComplete();
+    void rpcCompleteStory(story.id).then((ok) => {
+      if (ok) void syncProgressFromServer();
+    });
   }
 
   function advance() {
@@ -52,19 +58,46 @@ export function StoryPlayer({ story }: { story: Story }) {
   }
 
   if (done) {
+    const links = shareLinks(story);
     return (
-      <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col items-center justify-center bg-bg px-5 text-center lg:max-w-2xl">
+      <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col items-center justify-center bg-cream px-5 text-center lg:max-w-2xl">
         <Mascot mood="celebrate" size={180} float />
         <h1 className="mt-2 text-3xl font-black">Kisah selesai</h1>
         <p className="font-medium text-muted">{story.title}</p>
         <p className="mt-5 text-sm font-medium text-muted">XP</p>
         <p className="text-2xl font-extrabold tabular-nums text-gold">+{done.xp}</p>
-        <p className="mt-3 text-sm font-medium text-muted">Bintang</p>
+        <p className="mt-3 text-sm font-medium text-muted">Koin</p>
         <p className="text-2xl font-extrabold tabular-nums text-gold">+{done.gems}</p>
         <p className="mt-4 max-w-xs text-sm leading-5 text-muted">Tidak memakai nyawa. Ini cerita, bukan ujian.</p>
-        <DuoButton wide className="mt-8" onClick={() => void navigate({ to: "/kisah" })}>
-          Kisah lain
-        </DuoButton>
+        {!onboarded ? (
+          <div className="mt-8 flex flex-col gap-3 w-full">
+            <Link
+              to="/onboarding"
+              className="w-full py-3.5 px-5 rounded-full bg-gradient-to-b from-blush-50 to-blush-200 hover:brightness-105 text-choco-900 font-pixel font-bold text-xs sm:text-sm border-2 border-candy-600 shadow-[0_3px_0_#B01F62] active:translate-y-0.5 transition-all flex items-center justify-center gap-2"
+            >
+              <span>Mulai Belajar di web3min →</span>
+            </Link>
+            <DuoButton wide onClick={() => void navigate({ to: "/kisah" })}>
+              Kisah Lain
+            </DuoButton>
+          </div>
+        ) : (
+          <DuoButton wide className="mt-8" onClick={() => void navigate({ to: "/kisah" })}>
+            Kisah lain
+          </DuoButton>
+        )}
+
+        <div className="mt-6 w-full">
+          <p className="text-sm font-bold text-muted">Bagikan kisah ini</p>
+          <div className="mt-3 flex justify-center gap-3">
+            <DuoButton variant="secondary" onClick={() => openShare(links.wa)}>
+              WhatsApp
+            </DuoButton>
+            <DuoButton variant="secondary" onClick={() => openShare(links.tg)}>
+              Telegram
+            </DuoButton>
+          </div>
+        </div>
       </div>
     );
   }
@@ -75,7 +108,7 @@ export function StoryPlayer({ story }: { story: Story }) {
   const mood: MascotMood = beat.type === "talk" && beat.mood ? beat.mood : beat.type === "end" ? "proud" : "think";
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col bg-bg lg:max-w-2xl">
+    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col bg-cream lg:max-w-2xl">
       <div className="flex items-center gap-3 px-3 pt-3">
         <button
           type="button"
@@ -87,7 +120,7 @@ export function StoryPlayer({ story }: { story: Story }) {
         </button>
         <div className="h-4 flex-1 overflow-hidden rounded-full bg-line">
           <div
-            className="h-full origin-left rounded-full bg-sky transition-transform duration-300"
+            className="h-full origin-left rounded-full bg-candy-500 transition-transform duration-300"
             style={{ transform: `scaleX(${(i + (typed ? 1 : 0.4)) / story.beats.length})` }}
           />
         </div>
@@ -111,7 +144,7 @@ export function StoryPlayer({ story }: { story: Story }) {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 select-text">
           {beat.type === "proof" ? <StoryProof id={beat.proofId} /> : null}
 
           {beat.type === "fork" ? (
@@ -130,7 +163,7 @@ export function StoryPlayer({ story }: { story: Story }) {
                       }}
                       className={cn(
                         "w-full rounded-2xl border-2 border-b-4 px-4 py-3 text-left text-sm font-extrabold",
-                        chosen ? (opt.good ? "border-unit-teal bg-sky-soft" : "border-danger bg-danger-soft") : "border-line bg-bg",
+                        chosen ? (opt.good ? "border-mint bg-candy-100" : "border-danger bg-danger/10") : "border-line bg-bg",
                         locked && "opacity-40",
                       )}
                     >
@@ -150,13 +183,26 @@ export function StoryPlayer({ story }: { story: Story }) {
         </div>
       </div>
 
-      <div className="border-t border-line px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div className="border-t-2 border-choco-900 px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-white">
         <DuoButton wide disabled={beat.type === "fork" && pick === null} onClick={advance}>
           {last ? "Kelar" : "Lanjut"}
         </DuoButton>
       </div>
     </div>
   );
+}
+
+function shareLinks(story: Story) {
+  const url = `${BASE_URL}/kisah/${story.id}`;
+  const text = `Coba Kisah "${story.title}" di web3min:`;
+  return {
+    wa: `https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`,
+    tg: `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`,
+  };
+}
+
+function openShare(href: string) {
+  window.open(href, "_blank", "noopener,noreferrer");
 }
 
 function beatWho(beat: StoryBeat): Speaker {

@@ -9,6 +9,7 @@ import { playComplete } from "@/lib/audio";
 import { cn } from "@/lib/utils";
 import { DuoButton } from "@/components/duo-button";
 import { Mascot, SpeechBubble, TypeLine } from "@/components/mascot";
+import { rpcCompleteCase, syncProgressFromServer } from "@/lib/server-sync";
 
 export function CaseClinic({ study }: { study: CaseStudy }) {
   const navigate = useNavigate();
@@ -27,6 +28,9 @@ export function CaseClinic({ study }: { study: CaseStudy }) {
     const awarded = completeCase(study.id) ?? { xp: 0, gems: 0 };
     setDone(awarded);
     if (sound) playComplete();
+    void rpcCompleteCase(study.id).then((ok) => {
+      if (ok) void syncProgressFromServer();
+    });
   }
 
   function advance() {
@@ -44,7 +48,7 @@ export function CaseClinic({ study }: { study: CaseStudy }) {
 
   if (done) {
     return (
-      <div className="mx-auto flex min-h-dvh max-w-lg flex-col items-center justify-center bg-bg px-5 text-center">
+      <div className="mx-auto flex min-h-dvh max-w-lg flex-col items-center justify-center bg-cream px-5 text-center">
         <Mascot mood="proud" size={180} float />
         <h1 className="mt-2 text-3xl font-black">Bedah kelar</h1>
         <p className="font-bold text-muted">{study.title}</p>
@@ -57,7 +61,7 @@ export function CaseClinic({ study }: { study: CaseStudy }) {
             <p className="text-2xl font-black tabular-nums text-gold">+{done.xp}</p>
           </div>
           <div className="rounded-2xl border-2 border-line px-3 py-4">
-            <p className="text-xs font-extrabold uppercase tracking-label text-muted">Bintang</p>
+            <p className="text-xs font-extrabold uppercase tracking-label text-muted">Koin</p>
             <p className="text-2xl font-black tabular-nums text-gold">+{done.gems}</p>
           </div>
         </div>
@@ -72,7 +76,7 @@ export function CaseClinic({ study }: { study: CaseStudy }) {
   const tone = proof ? TONE_UI[proof.tone] : TONE_UI.warn;
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col bg-bg lg:max-w-5xl">
+    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col bg-cream lg:max-w-5xl">
       <div className="flex items-center gap-3 px-3 pt-3">
         <button
           type="button"
@@ -100,12 +104,19 @@ export function CaseClinic({ study }: { study: CaseStudy }) {
                 <p className={cn("text-[10px] font-extrabold uppercase tracking-label", tone.text)}>{tone.label}</p>
                 <p className="text-sm font-extrabold">{proof.value}</p>
               </div>
-              <p className="max-w-[55%] truncate text-right text-xs font-bold text-muted">{proof.via}</p>
+              <div className="max-w-[55%] text-right">
+                <p className="truncate text-xs font-bold text-muted">{proof.via}</p>
+                {proof.via?.toLowerCase().startsWith("x") && (
+                  <p className="text-[9px] font-semibold text-choco-600/70 italic leading-tight truncate">
+                    Unggahan publik, belum diverifikasi.
+                  </p>
+                )}
+              </div>
             </figcaption>
           </figure>
         ) : null}
 
-        <p className="mt-3 text-xs font-extrabold uppercase tracking-label text-streak">
+        <p className="mt-3 text-xs font-extrabold uppercase tracking-label text-flame-500">
           Langkah {i + 1} / {study.steps.length} · lihat
         </p>
         <p className="text-lg font-black leading-snug">{step.look}</p>
@@ -120,7 +131,7 @@ export function CaseClinic({ study }: { study: CaseStudy }) {
         </div>
       </div>
 
-      <div className="border-t border-line px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div className="border-t-2 border-choco-900 px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-white">
         <DuoButton wide onClick={advance}>
           {last ? "Ingat ini" : "Lanjut liat"}
         </DuoButton>

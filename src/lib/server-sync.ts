@@ -1,0 +1,1508 @@
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useProgress } from "@/lib/store";
+import { getLesson } from "@/lib/curriculum";
+import { getStory, getCase } from "@/lib/stories";
+import { todayKey } from "@/lib/time";
+import { sanitizeUsername } from "@/lib/people";
+
+const SERVER_QUEST_TO_CLIENT: Record<string, string> = {
+  "lesson-1": "lesson",
+  "xp-30": "xp",
+  "story-1": "kisah",
+  perfect: "perfect",
+  lesson: "lesson",
+  xp: "xp",
+  kisah: "kisah",
+};
+
+// Client-side in-flight tracking & cooldown to prevent rapid spam clicks
+const inFlightOps = new Set<string>();
+const lastOpTimes = new Map<string, number>();
+
+function canExecuteOp(key: string, cooldownMs = 800): boolean {
+  if (inFlightOps.has(key)) return false;
+  const lastTime = lastOpTimes.get(key) ?? 0;
+  if (Date.now() - lastTime < cooldownMs) return false;
+  return true;
+}
+
+function startOp(key: string) {
+  inFlightOps.add(key);
+  lastOpTimes.set(key, Date.now());
+}
+
+function endOp(key: string) {
+  inFlightOps.delete(key);
+}
+
+export async function syncProgressFromServer(): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return false;
+    const uid = session.user.id;
+    const today = todayKey();
+
+    const [progressRes, profileRes, completionsRes, questsRes, raffleRes] = await Promise.all([
+      supabase.from("progress").select("*").eq("user_id", uid).maybeSingle(),
+      supabase.from("profiles").select("username, bio, twitter, last_wallet_address, username_censored").eq("id", uid).maybeSingle(),
+      supabase.from("completions").select("lesson_id, perfect").eq("user_id", uid),
+      supabase.from("claimed_quests").select("quest_id, quest_date").eq("user_id", uid).eq("quest_date", today),
+      supabase.from("raffle_entries").select("raffle_id, tickets, entered_at, wallet_address, x_handle").eq("user_id", uid),
+    ]);
+
+    const progress = progressRes.data;
+    const profile = profileRes.data;
+    const completionRows = completionsRes.data ?? [];
+    const questRows = questsRes.data ?? [];
+    const raffleRows = raffleRes.data ?? [];
+
+    const completed: string[] = [];
+    const perfect: string[] = [];
+    const completedStories: string[] = [];
+    const completedCases: string[] = [];
+    for (const row of completionRows) {
+      const id = typeof row.lesson_id === "string" ? row.lesson_id : "";
+      if (!id) continue;
+      if (id.startsWith("story:")) {
+        const sid = id.slice(6);
+        if (getStory(sid)) completedStories.push(sid);
+        continue;
+      }
+      if (id.startsWith("case:")) {
+        const cid = id.slice(5);
+        if (getCase(cid)) completedCases.push(cid);
+        continue;
+      }
+      if (getLesson(id)) {
+        completed.push(id);
+        if (row.perfect) perfect.push(id);
+      }
+    }
+
+    const claimedQuests = questRows
+      .map((q) => SERVER_QUEST_TO_CLIENT[String(q.quest_id)])
+      .filter((id): id is "lesson" | "xp" | "kisah" | "perfect" => Boolean(id));
+
+    const enteredRaffles: Record<string, { count: number; enteredAt: number; walletAddress?: string; xHandle?: string }> = {};
+    for (const row of raffleRows) {
+      const rid = String(row.raffle_id ?? "");
+      const count = Number(row.tickets) || 0;
+      if (!rid || count <= 0) continue;
+      enteredRaffles[rid] = {
+        count,
+        enteredAt: row.entered_at ? new Date(row.entered_at).getTime() : Date.now(),
+        walletAddress: row.wallet_address || "",
+        xHandle: row.x_handle || "",
+      };
+    }
+
+    const serverHasProgress =
+      (typeof progress?.xp === "number" && progress.xp > 0) ||
+      completed.length > 0 ||
+      completedStories.length > 0 ||
+      completedCases.length > 0;
+
+    const serverUsername = sanitizeUsername(profile?.username ?? "");
+    const dailyGoalRaw = progress?.daily_goal;
+    const dailyGoal =
+      dailyGoalRaw === 10 || dailyGoalRaw === 20 || dailyGoalRaw === 30 || dailyGoalRaw === 50
+        ? dailyGoalRaw
+        : undefined;
+
+    useProgress.setState((s) => {
+      // Monotonic UNION merge: NEVER delete completed lessons or drop below earned stats
+      const mergedCompleted = Array.from(new Set([...s.completed, ...completed]));
+      const mergedPerfect = Array.from(new Set([...s.perfect, ...perfect]));
+      const mergedStories = Array.from(new Set([...s.completedStories, ...completedStories]));
+      const mergedCases = Array.from(new Set([...s.completedCases, ...completedCases]));
+      const mergedQuests = Array.from(new Set([...s.claimedQuests, ...claimedQuests]));
+      const mergedRaffles = { ...s.enteredRaffles, ...enteredRaffles };
+
+      return {
+        ...s,
+        onboarded: true,
+        introSeen: true,
+        guideSeen: true,
+        coachSeen: true,
+        username: serverUsername || s.username,
+        bio: typeof profile?.bio === "string" && profile.bio ? profile.bio : s.bio,
+        twitter: typeof profile?.twitter === "string" && profile.twitter ? profile.twitter : s.twitter,
+        lastWalletAddress: typeof profile?.last_wallet_address === "string" && profile.last_wallet_address ? profile.last_wallet_address : (s.lastWalletAddress || ""),
+        usernameCensored: Boolean(profile?.username_censored),
+        dailyGoal: dailyGoal ?? s.dailyGoal,
+        completed: mergedCompleted,
+        perfect: mergedPerfect,
+        completedStories: mergedStories,
+        completedCases: mergedCases,
+        claimedQuests: mergedQuests,
+        enteredRaffles: Object.keys(mergedRaffles).length ? mergedRaffles : s.enteredRaffles,
+        xp: Math.max(s.xp, progress?.xp ?? 0),
+        gems: Math.max(s.gems, progress?.gems ?? 0),
+        hearts: typeof progress?.hearts === "number" ? progress.hearts : s.hearts,
+        heartsUpdatedAt: progress?.hearts_updated_at
+          ? new Date(progress.hearts_updated_at).getTime()
+          : s.heartsUpdatedAt,
+        streak: Math.max(s.streak, progress?.streak ?? 0),
+        streakFreeze: Math.max(s.streakFreeze, progress?.streak_freeze ?? 0),
+        lastActiveDate: progress?.last_active_date
+          ? String(progress.last_active_date).slice(0, 10)
+          : s.lastActiveDate,
+        xpToday: typeof progress?.xp_today === "number" ? Math.max(s.xpToday, progress.xp_today) : s.xpToday,
+        xpTodayDate: progress?.xp_today_date
+          ? String(progress.xp_today_date).slice(0, 10)
+          : s.xpTodayDate,
+        weeklyXp: typeof progress?.weekly_xp === "number" ? Math.max(s.weeklyXp, progress.weekly_xp) : s.weeklyXp,
+        weekKey: progress?.week_key ?? s.weekKey,
+        lessonsToday: typeof progress?.lessons_today === "number" ? Math.max(s.lessonsToday, progress.lessons_today) : s.lessonsToday,
+        perfectToday: typeof progress?.perfect_today === "number" ? Math.max(s.perfectToday, progress.perfect_today) : s.perfectToday,
+        storiesToday: typeof progress?.stories_today === "number" ? Math.max(s.storiesToday, progress.stories_today) : s.storiesToday,
+        raffleTickets:
+          typeof progress?.raffle_tickets === "number"
+            ? Math.max(s.raffleTickets ?? 0, progress.raffle_tickets)
+            : s.raffleTickets,
+        lastClaimedLeaderboardWeek:
+          typeof progress?.last_claimed_leaderboard_week === "string" && progress.last_claimed_leaderboard_week
+            ? progress.last_claimed_leaderboard_week
+            : s.lastClaimedLeaderboardWeek,
+      };
+    });
+
+    // Background convergence: upload any locally completed lessons, stories, and cases that server doesn't have yet
+    const localOnly = useProgress.getState().completed.filter((id) => !completed.includes(id));
+    for (const id of localOnly) {
+      void rpcCompleteLesson(id, useProgress.getState().perfect.includes(id));
+    }
+    const localStories = useProgress.getState().completedStories.filter((id) => !completedStories.includes(id));
+    for (const id of localStories) {
+      void rpcCompleteStory(id);
+    }
+    const localCases = useProgress.getState().completedCases.filter((id) => !completedCases.includes(id));
+    for (const id of localCases) {
+      void rpcCompleteCase(id);
+    }
+
+    return true;
+  } catch (err) {
+    console.warn("[server-sync] Failed to sync progress from server:", err);
+    return false;
+  }
+}
+
+export async function rpcCompleteLesson(
+  lessonId: string,
+  perfect: boolean,
+): Promise<{ xp: number; gems: number; tickets: number; replay: boolean } | null> {
+  if (!isSupabaseConfigured || !supabase) return null;
+  const opKey = `lesson:${lessonId}`;
+  if (!canExecuteOp(opKey, 1000)) return null;
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return null;
+
+    const { data, error } = await supabase.rpc("complete_lesson", {
+      p_lesson_id: lessonId,
+      p_perfect: perfect,
+    });
+
+    if (error || !data) {
+      if (error?.message?.includes("Rate limit") || error?.message?.includes("Terlalu banyak")) {
+        console.warn("[server-sync] Rate limited:", error.message);
+      }
+      return null;
+    }
+    return {
+      xp: data.xp,
+      gems: data.gems,
+      tickets: data.tickets,
+      replay: data.replay,
+    };
+  } catch (err) {
+    console.warn("[server-sync] RPC complete_lesson failed:", err);
+    return null;
+  } finally {
+    endOp(opKey);
+  }
+}
+
+/**
+ * Telemetri penyelesaian kuis (Fase 3).
+ *
+ * HANYA panjang kuis, status selesai, dan posisi berhenti. Tidak ada XP, koin,
+ * tiket, atau identitas. Server menulisnya ke `activity_log` lewat
+ * `log_quiz_session`, dan RPC itu TIDAK menyentuh `progress` maupun
+ * `completions` sama sekali, jadi angka ekonomi tetap tidak bisa disentuh dari
+ * klien. Dipakai untuk membandingkan penyelesaian Rute 1 dengan rute berikutnya.
+ *
+ * Ujian Rute tidak pernah memanggil ini: ia latihan opsional, bukan kemajuan.
+ */
+export async function rpcLogQuizSession(input: {
+  lessonId: string;
+  quizLength: number;
+  completed: boolean;
+  dropAtIndex: number | null;
+}): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  const opKey = `quizlog:${input.lessonId}`;
+  if (!canExecuteOp(opKey, 3000)) return false;
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return false;
+
+    const quizLength = Math.trunc(input.quizLength);
+    if (!Number.isFinite(quizLength) || quizLength < 0) return false;
+
+    const { error } = await supabase.rpc("log_quiz_session", {
+      p_lesson_id: input.lessonId,
+      p_quiz_length: Math.min(200, Math.max(0, quizLength)),
+      p_completed: Boolean(input.completed),
+      p_drop_at_index: input.dropAtIndex === null ? null : Math.max(0, Math.trunc(input.dropAtIndex)),
+    });
+    return !error;
+  } catch {
+    return false;
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export async function rpcCompleteStory(
+  storyId: string,
+): Promise<{ xp: number; gems: number; replay: boolean } | null> {
+  if (!isSupabaseConfigured || !supabase) return null;
+  const opKey = `story:${storyId}`;
+  if (!canExecuteOp(opKey, 1000)) return null;
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return null;
+
+    const { data, error } = await supabase.rpc("complete_story", {
+      p_story_id: storyId,
+    });
+
+    if (error || !data) {
+      if (error?.message?.includes("Rate limit") || error?.message?.includes("Terlalu banyak")) {
+        console.warn("[server-sync] Rate limited:", error.message);
+      }
+      return null;
+    }
+    return {
+      xp: data.xp,
+      gems: data.gems,
+      replay: data.replay,
+    };
+  } catch (err) {
+    console.warn("[server-sync] RPC complete_story failed:", err);
+    return null;
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export async function rpcCompleteCase(
+  caseId: string,
+): Promise<{ xp: number; gems: number; replay: boolean } | null> {
+  if (!isSupabaseConfigured || !supabase) return null;
+  const opKey = `case:${caseId}`;
+  if (!canExecuteOp(opKey, 1000)) return null;
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return null;
+
+    const { data, error } = await supabase.rpc("complete_case", {
+      p_case_id: caseId,
+    });
+
+    if (error || !data) {
+      if (error?.message?.includes("Rate limit") || error?.message?.includes("Terlalu banyak")) {
+        console.warn("[server-sync] Rate limited:", error.message);
+      }
+      return null;
+    }
+    return {
+      xp: data.xp,
+      gems: data.gems,
+      replay: data.replay,
+    };
+  } catch (err) {
+    console.warn("[server-sync] RPC complete_case failed:", err);
+    return null;
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export async function rpcClaimQuest(questId: string): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  const opKey = `quest:${questId}`;
+  if (!canExecuteOp(opKey, 1000)) return false;
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return false;
+
+    const { error } = await supabase.rpc("claim_quest", { p_quest_id: questId });
+    return !error;
+  } catch {
+    return false;
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export async function rpcBuyFreeze(): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  const opKey = "shop:freeze";
+  if (!canExecuteOp(opKey, 1000)) return false;
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return false;
+
+    const { error } = await supabase.rpc("buy_freeze");
+    return !error;
+  } catch {
+    return false;
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export async function rpcRefillHearts(): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  const opKey = "shop:refill";
+  if (!canExecuteOp(opKey, 1000)) return false;
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return false;
+
+    const { error } = await supabase.rpc("refill_hearts");
+    return !error;
+  } catch {
+    return false;
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export async function rpcBuyTickets(count: number): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  const opKey = `shop:tickets:${count}`;
+  if (!canExecuteOp(opKey, 1000)) return false;
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return false;
+
+    const { error } = await supabase.rpc("buy_tickets", { p_count: count });
+    return !error;
+  } catch {
+    return false;
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export async function rpcEnterRaffle(
+  raffleId: string,
+  tickets: number,
+  walletAddress: string,
+  xHandle: string = ""
+): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) return { success: true };
+  const opKey = `raffle:${raffleId}`;
+  if (!canExecuteOp(opKey, 1000)) return { success: false, error: "Tunggu sebentar..." };
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return { success: false, error: "Silakan masuk terlebih dahulu" };
+
+    const { error } = await supabase.rpc("enter_raffle", {
+      p_raffle_id: raffleId,
+      p_tickets: tickets,
+      p_wallet_address: walletAddress.trim().toLowerCase(),
+      p_x_handle: xHandle.trim().replace(/^@+/, ""),
+    });
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal memasang tiket" };
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export async function rpcUpdateRaffleWallet(
+  raffleId: string,
+  walletAddress: string,
+  xHandle: string = ""
+): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) return { success: true };
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return { success: false, error: "Silakan masuk terlebih dahulu" };
+
+    const { error } = await supabase.rpc("update_raffle_entry_wallet", {
+      p_raffle_id: raffleId,
+      p_wallet_address: walletAddress.trim().toLowerCase(),
+      p_x_handle: xHandle.trim().replace(/^@+/, ""),
+    });
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal memperbarui wallet" };
+  }
+}
+
+export type DbRaffleEntryParticipant = {
+  user_id: string;
+  username: string;
+  wallet_address: string;
+  x_handle: string;
+  tickets: number;
+  entered_at: string;
+  is_multi_account?: boolean;
+};
+
+export async function rpcAdminGetRaffleEntries(
+  adminKey: string,
+  raffleId: string
+): Promise<DbRaffleEntryParticipant[]> {
+  if (!isSupabaseConfigured || !supabase) return [];
+  try {
+    const { data, error } = await supabase.rpc("admin_get_raffle_entries", {
+      p_key: adminKey,
+      p_raffle_id: raffleId,
+    });
+    if (error || !Array.isArray(data)) return [];
+    return data as DbRaffleEntryParticipant[];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveBioToServer(bio: string): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  const opKey = "profile:bio";
+  if (!canExecuteOp(opKey, 2000)) return false;
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return false;
+
+    const cleanBio = bio.trim().slice(0, 160);
+    const { error } = await supabase
+      .from("profiles")
+      .update({ bio: cleanBio })
+      .eq("id", session.user.id);
+
+    return !error;
+  } catch (err) {
+    console.warn("[server-sync] Failed to save bio to server:", err);
+    return false;
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export async function saveTwitterToServer(twitter: string): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  const opKey = "profile:twitter";
+  if (!canExecuteOp(opKey, 2000)) return false;
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return false;
+
+    // Sanitize twitter handle: strip leading @ and disallow illegal characters
+    const cleanTwitter = twitter.trim().replace(/^@+/, "");
+    if (cleanTwitter !== "" && !/^[a-zA-Z0-9_]{1,32}$/.test(cleanTwitter)) {
+      console.warn("[server-sync] Invalid twitter handle format");
+      return false;
+    }
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ twitter: cleanTwitter })
+      .eq("id", session.user.id);
+
+    return !error;
+  } catch (err) {
+    console.warn("[server-sync] Failed to save twitter to server:", err);
+    return false;
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export type DbLeaderboardUser = {
+  rank: number;
+  username: string;
+  username_censored?: boolean;
+  xp: number;
+  weekly_xp: number;
+  streak: number;
+  coin_reward: number;
+};
+
+export type LeaderboardResult = {
+  users: DbLeaderboardUser[];
+  totalCount: number;
+  /** false when the fetch failed or Supabase is not configured — lets the UI
+   *  tell "empty leaderboard" apart from "could not reach the server". */
+  ok: boolean;
+};
+
+export async function rpcGetLeaderboard(limit = 100, offset = 0): Promise<LeaderboardResult> {
+  if (!isSupabaseConfigured || !supabase) return { users: [], totalCount: 0, ok: false };
+  try {
+    const { data, error } = await supabase.rpc("get_leaderboard", {
+      p_limit: limit,
+      p_offset: offset,
+    });
+    if (error || !data) return { users: [], totalCount: 0, ok: false };
+    const rawList: DbLeaderboardUser[] = Array.isArray(data)
+      ? (data as DbLeaderboardUser[])
+      : Array.isArray((data as { users?: DbLeaderboardUser[] })?.users)
+        ? ((data as { users?: DbLeaderboardUser[] }).users as DbLeaderboardUser[])
+        : [];
+
+    const isTestUsername = (uname?: string) => {
+      if (!uname) return false;
+      const lower = uname.toLowerCase();
+      return (
+        lower.startsWith("sectest_") ||
+        lower === "testuser99" ||
+        lower.startsWith("testuser") ||
+        lower.includes("sectest")
+      );
+    };
+
+    const cleanUsers = rawList
+      .filter((u) => !isTestUsername(u.username))
+      .map((u, idx) => ({ ...u, rank: offset + idx + 1 }));
+
+    const rawTotal = Array.isArray(data)
+      ? data.length
+      : Number((data as { total_count?: number })?.total_count) || rawList.length;
+    const removedCount = rawList.length - cleanUsers.length;
+    const cleanTotal = Math.max(0, rawTotal - removedCount);
+
+    return {
+      users: cleanUsers,
+      totalCount: cleanTotal,
+      ok: true,
+    };
+  } catch (err) {
+    console.warn("[server-sync] Failed to get leaderboard from DB:", err);
+    return { users: [], totalCount: 0, ok: false };
+  }
+}
+
+export async function rpcDeleteMyAccount(): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) return { success: true };
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
+    // Call server endpoint first if user has active session
+    if (token) {
+      try {
+        const resp = await fetch("/api/auth/delete-account", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const json = await resp.json();
+        if (json.ok) {
+          await supabase.auth.signOut();
+          return { success: true };
+        }
+      } catch {
+        // Fallback to direct RPC
+      }
+    }
+
+    // Direct RPC fallback
+    const { error } = await supabase.rpc("delete_my_account");
+    if (error) {
+      console.warn("[server-sync] RPC delete_my_account error:", error);
+    }
+    await supabase.auth.signOut();
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal menghapus akun di server" };
+  }
+}
+
+export async function rpcChangeUsername(newUsername: string): Promise<{ success: boolean; username?: string; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) return { success: true, username: newUsername };
+  try {
+    const { data, error } = await supabase.rpc("change_username", {
+      p_new_username: newUsername.trim().toLowerCase(),
+    });
+    if (error) return { success: false, error: error.message };
+    const res = data as { success?: boolean; username?: string };
+    return { success: Boolean(res?.success), username: res?.username || newUsername };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal mengganti username" };
+  }
+}
+
+export async function rpcAdminSetUserCensorship(
+  key: string,
+  userId: string,
+  censored: boolean,
+  reason = ""
+): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) return { success: true };
+  try {
+    const { error } = await supabase.rpc("admin_set_user_censorship", {
+      p_key: key,
+      p_user_id: userId,
+      p_censored: censored,
+      p_reason: reason,
+    });
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal mengubah status sensor" };
+  }
+}
+
+export type DbAdminUserItem = {
+  id: string;
+  username: string;
+  display_name: string;
+  username_censored: boolean;
+  account_type: "user" | "test" | "demo";
+  xp: number;
+  weekly_xp: number;
+  streak: number;
+  created_at: string;
+  /** Status EFEKTIF dari server — supporter kedaluwarsa dihitung false. */
+  is_supporter?: boolean;
+  /** true = aktif tanpa tanggal berakhir. */
+  supporter_lifetime?: boolean;
+  /** Tanggal berakhir; null = lifetime / tidak aktif. */
+  supporter_expires_at?: string | null;
+};
+
+export async function rpcAdminGetUsers(key: string, filterType = "all"): Promise<DbAdminUserItem[]> {
+  if (!isSupabaseConfigured || !supabase) return [];
+  try {
+    const { data, error } = await supabase.rpc("admin_get_users", {
+      p_key: key,
+      p_filter_type: filterType,
+    });
+    if (error || !Array.isArray(data)) return [];
+    return data as DbAdminUserItem[];
+  } catch {
+    return [];
+  }
+}
+
+export async function rpcClaimWeeklyLeaderboardReward(
+  rank = 7,
+): Promise<{ success: boolean; reward: number; week: string; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { success: false, reward: 0, week: "", error: "Database offline" };
+  }
+  const opKey = `leaderboard:claim:${rank}`;
+  if (!canExecuteOp(opKey, 2000)) {
+    return { success: false, reward: 0, week: "", error: "Sedang diproses..." };
+  }
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) {
+      return { success: false, reward: 0, week: "", error: "Belum login" };
+    }
+
+    const { data, error } = await supabase.rpc("claim_weekly_leaderboard_reward", {
+      p_rank: rank,
+    });
+
+    if (error) {
+      return { success: false, reward: 0, week: "", error: error.message };
+    }
+
+    // Refresh store from server
+    void syncProgressFromServer();
+
+    return {
+      success: Boolean(data?.success),
+      reward: Number(data?.reward) || 0,
+      week: String(data?.week || ""),
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, reward: 0, week: "", error: msg };
+  } finally {
+    endOp(opKey);
+  }
+}
+
+export type DbRaffleItem = {
+  id: string;
+  title: string;
+  prize: string;
+  prize_detail: string;
+  category: "nft" | "gems" | "outfit" | "badge" | "tickets";
+  nft_network?: string;
+  nft_contract?: string;
+  nft_token_id?: string;
+  nft_rarity?: "mythic" | "legendary" | "rare" | "utility";
+  status: "live" | "verifying" | "ended" | "upcoming" | "drawn";
+  starts_at: string;
+  ends_at: string;
+  ticket_cost: number;
+  stars_cost: number;
+  winner_count: number;
+  perks: string[];
+  image_url?: string;
+  is_simulation?: boolean;
+  slot_type?: "GTD" | "WL" | "GROUP" | "ITEM" | null;
+  partner_name?: string | null;
+  requirement_x_handle?: string | null;
+  official_mint_domain?: string | null;
+  mint_price?: string | null;
+  mint_schedule?: string | null;
+  announcement_date?: string | null;
+  item_id?: string | null;
+  seed_hash?: string | null;
+  draw_seed?: string | null;
+  candidates?: {
+    winners: Array<{
+      user_id: string;
+      username: string;
+      wallet_address: string;
+      x_handle: string;
+      tickets: number;
+      rank: number;
+      verified?: boolean;
+    }>;
+    reserves: Array<{
+      user_id: string;
+      username: string;
+      wallet_address: string;
+      x_handle: string;
+      tickets: number;
+      rank: number;
+    }>;
+  };
+  discord_group_link?: string;
+};
+
+export async function rpcGetRaffles(): Promise<DbRaffleItem[]> {
+  if (!isSupabaseConfigured || !supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from("raffles")
+      .select("*")
+      .order("starts_at", { ascending: false });
+
+    if (error || !Array.isArray(data)) return [];
+    return data as DbRaffleItem[];
+  } catch (err) {
+    console.warn("[server-sync] Failed to load raffles from DB:", err);
+    return [];
+  }
+}
+
+export type DbRaffleStats = {
+  raffle_id: string;
+  total_tickets: number;
+  total_participants: number;
+};
+
+export async function rpcGetRaffleStats(raffleId?: string): Promise<Record<string, DbRaffleStats>> {
+  if (!isSupabaseConfigured || !supabase) return {};
+  try {
+    const { data, error } = await supabase.rpc("get_raffle_stats", {
+      p_raffle_id: raffleId || null,
+    });
+    if (error || !Array.isArray(data)) return {};
+    const map: Record<string, DbRaffleStats> = {};
+    for (const item of data as DbRaffleStats[]) {
+      if (item && item.raffle_id) {
+        map[item.raffle_id] = item;
+      }
+    }
+    return map;
+  } catch (err) {
+    console.warn("[server-sync] Failed to load raffle stats from DB:", err);
+    return {};
+  }
+}
+
+export async function rpcAdminVerifyKey(key: string): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) {
+    return key === "web3min-admin-2026" || key === "thalassa-admin-2026" || key === "admin123";
+  }
+  try {
+    const { data, error } = await supabase.rpc("admin_verify_key", { p_key: key });
+    if (error) return false;
+    return Boolean(data);
+  } catch {
+    return false;
+  }
+}
+
+export type AdminUpsertRafflePayload = {
+  key: string;
+  id: string;
+  title: string;
+  prize: string;
+  prizeDetail: string;
+  category?: string;
+  status?: string;
+  endsAt: string; // ISO string
+  ticketCost?: number;
+  winnerCount?: number;
+  imageUrl?: string;
+  nftNetwork?: string;
+  nftContract?: string;
+  nftTokenId?: string;
+  nftRarity?: string;
+  perks?: string[];
+  isSimulation?: boolean;
+  slotType?: "GTD" | "WL" | "GROUP" | "ITEM" | null;
+  partnerName?: string | null;
+  requirementXHandle?: string | null;
+  officialMintDomain?: string | null;
+  mintPrice?: string | null;
+  mintSchedule?: string | null;
+  announcementDate?: string | null;
+  itemId?: string | null;
+  discordGroupLink?: string | null;
+};
+
+export async function rpcAdminUpsertRaffle(payload: AdminUpsertRafflePayload): Promise<{ success: boolean; id?: string; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { success: true, id: payload.id };
+  }
+  try {
+    const { data, error } = await supabase.rpc("admin_upsert_raffle", {
+      p_key: payload.key,
+      p_id: payload.id,
+      p_title: payload.title,
+      p_prize: payload.prize,
+      p_prize_detail: payload.prizeDetail,
+      p_category: payload.category || "nft",
+      p_status: payload.status || "live",
+      p_ends_at: payload.endsAt,
+      p_ticket_cost: payload.ticketCost || 1,
+      p_winner_count: payload.winnerCount || 1,
+      p_image_url: payload.imageUrl || "",
+      p_nft_network: payload.nftNetwork || "Base",
+      p_nft_contract: payload.nftContract || "",
+      p_nft_token_id: payload.nftTokenId || "",
+      p_nft_rarity: payload.nftRarity || "rare",
+      p_perks: payload.perks || [],
+      p_is_simulation: payload.isSimulation ?? false,
+      p_slot_type: payload.slotType || null,
+      p_partner_name: payload.partnerName || null,
+      p_requirement_x_handle: payload.requirementXHandle || null,
+      p_official_mint_domain: payload.officialMintDomain || null,
+      p_mint_price: payload.mintPrice || null,
+      p_mint_schedule: payload.mintSchedule || null,
+      p_announcement_date: payload.announcementDate || null,
+      p_item_id: payload.itemId || null,
+      p_discord_group_link: payload.discordGroupLink || null,
+    });
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    const res = data as { success?: boolean; id?: string };
+    return { success: Boolean(res?.success), id: res?.id || payload.id };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal menyimpan undian" };
+  }
+}
+
+export async function rpcAdminDeleteRaffle(key: string, raffleId: string): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { success: true };
+  }
+  try {
+    const { data, error } = await supabase.rpc("admin_delete_raffle", {
+      p_key: key,
+      p_raffle_id: raffleId,
+    });
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    const res = data as { success?: boolean };
+    return { success: Boolean(res?.success) };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal menghapus undian" };
+  }
+}
+
+export async function rpcAdminTriggerDraw(key: string, raffleId: string): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) return { success: true };
+  try {
+    const { data, error } = await supabase.rpc("admin_trigger_draw", {
+      p_key: key,
+      p_raffle_id: raffleId,
+    });
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal memproses undian" };
+  }
+}
+
+export async function rpcAdminVerifyWinner(
+  key: string,
+  raffleId: string,
+  userId: string,
+  verified: boolean
+): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) return { success: true };
+  try {
+    const { error } = await supabase.rpc("admin_verify_winner", {
+      p_key: key,
+      p_raffle_id: raffleId,
+      p_user_id: userId,
+      p_verified: verified,
+    });
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal memverifikasi pemenang" };
+  }
+}
+
+export async function rpcAdminSwapReserveWinner(
+  key: string,
+  raffleId: string,
+  winnerUserId: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) return { success: true };
+  try {
+    const { error } = await supabase.rpc("admin_swap_reserve_winner", {
+      p_key: key,
+      p_raffle_id: raffleId,
+      p_winner_user_id: winnerUserId,
+    });
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal menukar dengan cadangan" };
+  }
+}
+
+export async function rpcAdminAnnounceWinners(
+  key: string,
+  raffleId: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !supabase) return { success: true };
+  try {
+    const { error } = await supabase.rpc("admin_announce_winners", {
+      p_key: key,
+      p_raffle_id: raffleId,
+    });
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal mengumumkan pemenang" };
+  }
+}
+
+export type RafflePublicResults = {
+  success: boolean;
+  raffle_id?: string;
+  status: string;
+  slot_type?: "GTD" | "WL" | "GROUP" | "ITEM" | null;
+  seed_hash?: string;
+  draw_seed?: string;
+  total_winners?: number;
+  winners: Array<{
+    display_name?: string;
+    masked_wallet?: string;
+    announced_at: string;
+  }>;
+  is_user_winner: boolean;
+  user_win_info?: {
+    raffle_id?: string;
+    prize: string;
+    slot_type?: string;
+    partner_name?: string;
+    official_mint_domain?: string;
+    edition_number?: number;
+    discord_group_link?: string;
+    announced_at?: string;
+  };
+};
+
+export async function rpcGetRafflePublicResults(raffleId: string): Promise<RafflePublicResults | null> {
+  if (!isSupabaseConfigured || !supabase) return null;
+  try {
+    const { data, error } = await supabase.rpc("get_raffle_public_results", {
+      p_raffle_id: raffleId,
+    });
+    if (error || !data) return null;
+    return data as RafflePublicResults;
+  } catch {
+    return null;
+  }
+}
+
+export type DbPingResult = {
+  ok: boolean;
+  latencyMs: number;
+  status: "active" | "waking" | "error";
+  message: string;
+};
+
+export async function pingAndWakeDatabase(): Promise<DbPingResult> {
+  const t0 = Date.now();
+  if (!isSupabaseConfigured || !supabase) {
+    return {
+      ok: false,
+      latencyMs: 0,
+      status: "error",
+      message: "Supabase client tidak dikonfigurasi.",
+    };
+  }
+
+  try {
+    const { error } = await supabase
+      .from("raffles")
+      .select("id")
+      .limit(1);
+
+    const elapsed = Date.now() - t0;
+    if (error) {
+      return {
+        ok: false,
+        latencyMs: elapsed,
+        status: "error",
+        message: error.message,
+      };
+    }
+    return {
+      ok: true,
+      latencyMs: elapsed,
+      status: "active",
+      message: "Database aktif dan merespons normal.",
+    };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      latencyMs: Date.now() - t0,
+      status: "error",
+      message: (err as Error)?.message || "Koneksi ke database gagal.",
+    };
+  }
+}
+
+
+
+/* ------------------------------------------------------------------ *
+ * Dashboard statistik admin (Langkah 2 — activity_log)
+ *
+ * Gate ada di DATABASE lewat is_admin(), bukan di UI: halaman /admin
+ * boleh dibuka siapa pun, tapi RPC ini melempar `forbidden` (42501)
+ * untuk non-admin. RPC lama yang masih memakai p_key sengaja tidak
+ * diikutkan ke sini supaya migrasi bertahap.
+ * ------------------------------------------------------------------ */
+
+export type AdminOverview = {
+  total_users: number;
+  new_today: number;
+  dau: number;
+  wau: number;
+  mau: number;
+  lessons_today: number;
+  raffle_entries_today: number;
+  log_since: string | null;
+};
+
+export type AdminDailyPoint = {
+  day: string;
+  signups: number;
+  active_users: number;
+  lessons: number;
+};
+
+export type AdminFunnelRow = { lesson_id: string; users: number };
+
+export type AdminActivityRow = {
+  created_at: string;
+  username: string | null;
+  event: string;
+  ref_id: string | null;
+  meta: Record<string, unknown>;
+};
+
+export type AdminAnalytics = {
+  overview: AdminOverview;
+  series: AdminDailyPoint[];
+  funnel: AdminFunnelRow[];
+  feed: AdminActivityRow[];
+};
+
+/** Pesan khusus supaya UI bisa membedakan "bukan admin" dari error lain. */
+export const ADMIN_FORBIDDEN = "forbidden";
+
+function isForbidden(message: string | undefined): boolean {
+  if (!message) return false;
+  return /forbidden|42501|permission denied/i.test(message);
+}
+
+export async function rpcAdminAnalytics(days = 30): Promise<
+  { ok: true; data: AdminAnalytics } | { ok: false; error: string; forbidden: boolean }
+> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { ok: false, error: "Database belum dikonfigurasi.", forbidden: false };
+  }
+  try {
+    const [o, s, f, r] = await Promise.all([
+      supabase.rpc("admin_overview"),
+      supabase.rpc("admin_daily_series", { p_days: days }),
+      supabase.rpc("admin_lesson_funnel"),
+      supabase.rpc("admin_recent_activity", { p_limit: 50 }),
+    ]);
+
+    const firstError = o.error || s.error || f.error || r.error;
+    if (firstError) {
+      return {
+        ok: false,
+        error: firstError.message,
+        forbidden: isForbidden(firstError.message),
+      };
+    }
+
+    return {
+      ok: true,
+      data: {
+        overview: (o.data ?? {}) as AdminOverview,
+        series: (Array.isArray(s.data) ? s.data : []) as AdminDailyPoint[],
+        funnel: (Array.isArray(f.data) ? f.data : []) as AdminFunnelRow[],
+        feed: (Array.isArray(r.data) ? r.data : []) as AdminActivityRow[],
+      },
+    };
+  } catch (err: unknown) {
+    const msg = (err as Error)?.message || "Gagal memuat statistik admin.";
+    return { ok: false, error: msg, forbidden: isForbidden(msg) };
+  }
+}
+
+/**
+ * Apakah pemanggil terdaftar sebagai admin (kolom profiles.is_admin)?
+ *
+ * Dipakai /admin untuk membuka panel tanpa kunci rahasia: penentuannya di
+ * database, bukan di UI. Non-admin dapat `false` (bukan error) karena RPC
+ * `is_admin()` sendiri tidak melempar — lihat migration admin_analytics.
+ */
+export async function rpcIsAdmin(): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  try {
+    const { data, error } = await supabase.rpc("is_admin");
+    if (error) return false;
+    return data === true;
+  } catch {
+    return false;
+  }
+}
+
+export interface SupporterStatus {
+  /** Aktif secara EFEKTIF — supporter kedaluwarsa dihitung false oleh database. */
+  isSupporter: boolean;
+  /** true = aktif tanpa tanggal berakhir. */
+  isLifetime: boolean;
+  since: string | null;
+  expiresAt: string | null;
+  /**
+   * false = pemanggil belum login. Dipakai /supporter supaya user yang belum
+   * masuk diminta masuk, bukan diberi pesan "pembayaran gagal" yang menyesatkan.
+   */
+  authenticated: boolean;
+}
+
+const NO_SUPPORTER: SupporterStatus = {
+  isSupporter: false,
+  isLifetime: false,
+  since: null,
+  expiresAt: null,
+  authenticated: false,
+};
+
+/**
+ * Status supporter milik pemanggil.
+ *
+ * Sumber kebenaran ada di SERVER (`profiles.is_supporter` + masa aktif), bukan
+ * localStorage — badge tidak boleh bisa dipalsukan dari sisi klien. RPC-nya
+ * `stable` + `security definer`; kedaluwarsa sudah dihitung di sana, jadi
+ * klien tidak perlu (dan tidak boleh) menghitung sendiri.
+ *
+ * Gagal apa pun -> status non-supporter. Aman: yang salah hanya tampilan,
+ * bukan hak akses (fitur supporter tetap divalidasi server saat dipakai).
+ */
+export async function rpcGetMySupporterStatus(): Promise<SupporterStatus> {
+  if (!isSupabaseConfigured || !supabase) return NO_SUPPORTER;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const authenticated = Boolean(session?.user);
+
+    const { data, error } = await supabase.rpc("get_my_supporter_status");
+    if (error || !data || typeof data !== "object") {
+      // Tetap laporkan status login walau RPC gagal — supaya UI bisa
+      // membedakan "belum masuk" dari "server bermasalah".
+      return { ...NO_SUPPORTER, authenticated };
+    }
+    const d = data as Record<string, unknown>;
+    return {
+      isSupporter: d.is_supporter === true,
+      isLifetime: d.is_lifetime === true,
+      since: typeof d.since === "string" ? d.since : null,
+      expiresAt: typeof d.expires_at === "string" ? d.expires_at : null,
+      authenticated,
+    };
+  } catch {
+    return NO_SUPPORTER;
+  }
+}
+
+export interface PublicProfile {
+  ok: boolean;
+  reason?: string;
+  username: string;
+  censored: boolean;
+  xp: number;
+  weeklyXp: number;
+  streak: number;
+  lessonsCompleted: number;
+  isSupporter: boolean;
+  supporterLifetime: boolean;
+  supporterSince: string | null;
+}
+
+const NO_PROFILE: PublicProfile = {
+  ok: false,
+  reason: "not_found",
+  username: "",
+  censored: false,
+  xp: 0,
+  weeklyXp: 0,
+  streak: 0,
+  lessonsCompleted: 0,
+  isSupporter: false,
+  supporterLifetime: false,
+  supporterSince: null,
+};
+
+/**
+ * Profil publik satu user — untuk halaman /u/$username yang bisa dibagikan.
+ *
+ * RPC-nya `security definer` dan sengaja TIDAK mengembalikan data pribadi
+ * apa pun (bio, twitter, wallet, email, account_type). Yang keluar hanya
+ * yang sudah tampil di klasemen publik + hitungan pencapaian. Aturan sensor
+ * nama ikut `get_display_name()`, jadi user tersensor tetap aman.
+ *
+ * Bisa dipanggil tanpa login (anon) — halaman ini memang untuk dibagikan.
+ */
+export async function rpcGetPublicProfile(username: string): Promise<PublicProfile> {
+  if (!isSupabaseConfigured || !supabase || !username) return NO_PROFILE;
+  try {
+    const { data, error } = await supabase.rpc("get_public_profile", { p_username: username });
+    if (error || !data || typeof data !== "object") return NO_PROFILE;
+    const d = data as Record<string, unknown>;
+    if (d.ok !== true) return { ...NO_PROFILE, reason: typeof d.reason === "string" ? d.reason : "not_found" };
+    return {
+      ok: true,
+      username: typeof d.username === "string" ? d.username : "",
+      censored: d.censored === true,
+      xp: typeof d.xp === "number" ? d.xp : 0,
+      weeklyXp: typeof d.weekly_xp === "number" ? d.weekly_xp : 0,
+      streak: typeof d.streak === "number" ? d.streak : 0,
+      lessonsCompleted: typeof d.lessons_completed === "number" ? d.lessons_completed : 0,
+      isSupporter: d.is_supporter === true,
+      supporterLifetime: d.supporter_lifetime === true,
+      supporterSince: typeof d.supporter_since === "string" ? d.supporter_since : null,
+    };
+  } catch {
+    return NO_PROFILE;
+  }
+}
+
+/**
+ * Admin mengaktifkan supporter secara MANUAL.
+ *
+ * Ini jaring aman yang wajib ada sebelum halaman jualan dibuka: kalau deteksi
+ * pembayaran GatePay gagal, user sudah terlanjur bayar — jangan sampai dia
+ * tidak dapat apa-apa. `p_days = null` berarti lifetime.
+ *
+ * Kalau user masih aktif, masa aktifnya DIPERPANJANG dari tanggal berakhir
+ * (bukan dari hari ini) — logikanya di database, jangan diduplikasi di klien.
+ */
+export async function rpcAdminGrantSupporter(
+  key: string,
+  username: string,
+  days: number | null,
+): Promise<{ success: boolean; error?: string; isLifetime?: boolean; expiresAt?: string | null }> {
+  if (!isSupabaseConfigured || !supabase) return { success: false, error: "Supabase tidak siap." };
+  try {
+    const { data, error } = await supabase.rpc("admin_grant_supporter", {
+      p_key: key,
+      p_username: username,
+      p_days: days,
+    });
+    if (error) return { success: false, error: error.message };
+    const d = (data ?? {}) as Record<string, unknown>;
+    if (d.success !== true) return { success: false, error: "Server menolak permintaan." };
+    return {
+      success: true,
+      isLifetime: d.is_lifetime === true,
+      expiresAt: typeof d.expires_at === "string" ? d.expires_at : null,
+    };
+  } catch (err: unknown) {
+    return { success: false, error: (err as Error)?.message || "Gagal menghubungi server." };
+  }
+}
+
+
+// ── Supporter: pembayaran QRIS (GatePay) ────────────────────────────────────
+// `x-api-key` GatePay HANYA hidup di server; klien cuma bicara ke endpoint kita.
+
+export interface SupporterOrderResult {
+  ok: boolean;
+  error?: string;
+  alreadySupporter?: boolean;
+  orderId?: string;
+  reference?: string;
+  baseAmount?: number;
+  uniqueAmount?: number;
+  qris?: string;
+  checkoutUrl?: string;
+  expiresIn?: number;
+}
+
+/**
+ * Buat order QRIS supporter. Harga ditentukan SERVER (Rp 9.999) — tidak pernah
+ * dikirim dari sini, supaya tidak bisa diubah dari browser.
+ */
+export async function createSupporterOrder(redirectUrl?: string): Promise<SupporterOrderResult> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { ok: false, error: "Supabase tidak siap." };
+  }
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return { ok: false, error: "Kamu harus masuk dulu." };
+
+    const res = await fetch("/api/supporter/create-order", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ redirectUrl }),
+    });
+    const json = (await res.json()) as SupporterOrderResult;
+    return json;
+  } catch (err: unknown) {
+    return { ok: false, error: (err as Error)?.message || "Gagal menghubungi server." };
+  }
+}
+
+/**
+ * Cek status satu order langsung ke GatePay (lewat server).
+ *
+ * Dipakai sebagai CADANGAN kalau webhook telat/gagal — deteksi pembayaran
+ * GatePay memakai API internal yang bisa expired, jadi klien tidak boleh
+ * menggantungkan diri pada webhook saja.
+ */
+export async function checkSupporterOrder(
+  orderId: string,
+): Promise<{ ok: boolean; status?: string; error?: string; activated?: boolean }> {
+  if (!isSupabaseConfigured || !supabase) return { ok: false, error: "Supabase tidak siap." };
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return { ok: false, error: "Sesi tidak ditemukan." };
+
+    const res = await fetch(`/api/supporter/order-status?orderId=${encodeURIComponent(orderId)}`, {
+      headers: { authorization: `Bearer ${session.access_token}` },
+    });
+    return (await res.json()) as { ok: boolean; status?: string; error?: string; activated?: boolean };
+  } catch (err: unknown) {
+    return { ok: false, error: (err as Error)?.message || "Gagal menghubungi server." };
+  }
+}
+
+
+// ── Supporter: benefit (nyawa gratis & tiket x3) ────────────────────────────
+// Kedua benefit dihitung di DATABASE. Klien hanya menampilkan; kalau dihitung
+// di klien, siapa pun bisa memalsukan kuota atau multiplier dari browser.
+
+export interface FreeRefillQuota {
+  used: number;
+  limit: number;
+  remaining: number;
+  hearts: number;
+  isSupporter: boolean;
+  resetAt: string | null;
+  /** false = pemanggil belum login; UI harus menyuruh masuk, bukan bilang kuota habis. */
+  authenticated: boolean;
+}
+
+const NO_QUOTA: FreeRefillQuota = {
+  used: 0, limit: 2, remaining: 0, hearts: 5, isSupporter: false, resetAt: null,
+  authenticated: false,
+};
+
+/** Sisa kuota isi nyawa gratis hari ini (2x biasa, 4x supporter). */
+export async function rpcGetFreeRefillQuota(): Promise<FreeRefillQuota> {
+  if (!isSupabaseConfigured || !supabase) return NO_QUOTA;
+  try {
+    const { data, error } = await supabase.rpc("get_free_refill_quota");
+    if (error || !data || typeof data !== "object") return NO_QUOTA;
+    const d = data as Record<string, unknown>;
+    return {
+      used: Number(d.used) || 0,
+      limit: Number(d.limit) || 2,
+      remaining: Number(d.remaining) || 0,
+      hearts: Number(d.hearts) || 0,
+      isSupporter: d.is_supporter === true,
+      resetAt: typeof d.reset_at === "string" ? d.reset_at : null,
+      authenticated: d.authenticated === true,
+    };
+  } catch {
+    return NO_QUOTA;
+  }
+}
+
+/** Pakai satu kuota isi nyawa gratis. */
+export async function rpcRefillHeartsFree(): Promise<{ ok: boolean; error?: string; remaining?: number }> {
+  if (!isSupabaseConfigured || !supabase) return { ok: false, error: "Supabase tidak siap." };
+  const opKey = "shop:refill-free";
+  if (!canExecuteOp(opKey, 1000)) return { ok: false, error: "Tunggu sebentar." };
+  startOp(opKey);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return { ok: false, error: "Kamu harus masuk dulu." };
+
+    const { data, error } = await supabase.rpc("refill_hearts_free");
+    if (error) return { ok: false, error: error.message };
+    const d = (data ?? {}) as Record<string, unknown>;
+    if (d.success !== true) return { ok: false, error: "Gagal mengisi nyawa." };
+    return { ok: true, remaining: Number(d.remaining) || 0 };
+  } catch (err: unknown) {
+    return { ok: false, error: (err as Error)?.message || "Gagal menghubungi server." };
+  } finally {
+    endOp(opKey);
+  }
+}

@@ -1,31 +1,179 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
+import { Shield, Lock, EyeOff, Trash2, ArrowLeft, Database, CheckCircle2 } from "lucide-react";
 
 export const Route = createFileRoute("/privacy")({ component: PrivacyPage });
 
 function PrivacyPage() {
   return (
     <AppShell>
-      <main className="px-4 py-5">
-        <h1 className="text-[28px] font-extrabold leading-[34px]">Kebijakan privasi</h1>
-        <p className="mt-3 text-base leading-6">
-          Progress, username, dan pengaturan disimpan di perangkat (local storage). Kami tidak mengumpulkan seed phrase,
-          private key, atau password dompet — dan tidak memintanya.
-        </p>
-        <p className="mt-3 text-base leading-6 text-muted">
-          Feed teman pada versi ini memakai data contoh di perangkat, bukan komunitas live. Tidak ada analitik yang
-          mengumpulkan data sensitif.
-        </p>
-        <p className="mt-3 text-base leading-6 text-muted">
-          Reset progres menghapus data lokal itu. Menghapus data situs di browser juga menghapus progres.
-        </p>
-        <p className="mt-3 text-base leading-6 text-muted">
-          Kamu tidak perlu menghubungkan wallet. Jangan pernah memasukkan seed phrase ke web3min atau situs lain yang
-          mengaku sebagai web3min.
-        </p>
-        <Link to="/about" className="mt-6 inline-flex min-h-11 font-bold text-primary">
-          Tentang web3min
-        </Link>
+      <main className="max-w-3xl mx-auto px-4 py-6 sm:py-8 select-none">
+        {/* Header Hero Banner */}
+        <div className="p-6 sm:p-8 rounded-[32px] bg-linear-to-b from-cream via-candy-100 to-[#FFD6E6] border-2 border-choco-900 shadow-[0_8px_0_#3B2218] text-choco-900">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="px-3 py-1 rounded-full bg-gradient-to-b from-blush-50 to-blush-200 border-2 border-candy-600 text-choco-900 font-pixel text-[10px] font-bold shadow-[0_2px_0_#B01F62]">
+              PRIVASI & KEAMANAN DATA
+            </span>
+          </div>
+          <h1 className="font-display font-black text-2xl sm:text-3xl text-choco-900 tracking-tight leading-tight">
+            Kebijakan Privasi Web3min
+          </h1>
+          <p className="text-xs sm:text-sm font-semibold text-choco-700 mt-2 leading-relaxed max-w-xl">
+            Kami memegang prinsip privasi terdesentralisasi: data belajarmu adalah milikmu. Nol pelacakan pihak ketiga, nol pengumpulan seed phrase.
+          </p>
+        </div>
+
+        {/* Bento Privacy Cards */}
+        <div className="mt-8 space-y-4">
+          {/* Card 1: Zero Wallet Risk */}
+          <div className="p-5 sm:p-6 rounded-2xl bg-white border-2 border-choco-900 shadow-[0_4px_0_#3B2218]">
+            <div className="flex items-start gap-4">
+              <div className="size-11 rounded-2xl bg-leaf-fill border-2 border-choco-900 flex items-center justify-center shrink-0 shadow-[0_2px_0_#3B2218]">
+                <Lock className="size-6 text-leaf-shadow" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-pixel text-xs sm:text-sm font-bold text-choco-900">
+                    Nol Akses Seed Phrase & Private Key
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full font-pixel text-[9px] font-bold bg-leaf-fill-deep text-leaf-deep-ink border border-choco-900">
+                    Mutlak
+                  </span>
+                </div>
+                <p className="text-xs font-semibold text-choco-700 mt-1.5 leading-relaxed">
+                  Web3min tidak pernah dan tidak akan pernah meminta seed phrase, private key, atau kata sandi dompet kripto pribadimu. Kamu tidak perlu menghubungkan dompet untuk belajar. Alamat wallet hanya diminta jika kamu ikut undian slot mint.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 2: Local Storage & Supabase Sync */}
+          <div className="p-5 sm:p-6 rounded-2xl bg-white border-2 border-choco-900 shadow-[0_4px_0_#3B2218]">
+            <div className="flex items-start gap-4">
+              <div className="size-11 rounded-2xl bg-coin-fill border-2 border-choco-900 flex items-center justify-center shrink-0 shadow-[0_2px_0_#3B2218]">
+                <Database className="size-6 text-warn-ink" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-pixel text-xs sm:text-sm font-bold text-choco-900">
+                    Penyimpanan Progres & Anonimitas
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full font-pixel text-[9px] font-bold bg-coin-fill-deep text-coin-ink-deep border border-choco-900">
+                    Transparan
+                  </span>
+                </div>
+                <p className="text-xs font-semibold text-choco-700 mt-1.5 leading-relaxed">
+                  Progres XP, nyawa, streak, dan koleksi outfit tersimpan di penyimpanan lokal browser (localStorage) dan disinkronkan ke Supabase hanya dengan username samaran yang kamu pilih. Tidak ada email pribadi atau nomor telepon yang diminta.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 3: No Ads & Tracking */}
+          <div className="p-5 sm:p-6 rounded-2xl bg-white border-2 border-choco-900 shadow-[0_4px_0_#3B2218]">
+            <div className="flex items-start gap-4">
+              <div className="size-11 rounded-2xl bg-candy-100 border-2 border-choco-900 flex items-center justify-center shrink-0 shadow-[0_2px_0_#3B2218]">
+                <EyeOff className="size-6 text-candy-800" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-pixel text-xs sm:text-sm font-bold text-choco-900">
+                    Tanpa Iklan & Pelacak Pihak Ketiga
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full font-pixel text-[9px] font-bold bg-candy-200 text-candy-900 border border-choco-900">
+                    Bersih
+                  </span>
+                </div>
+                <p className="text-xs font-semibold text-choco-700 mt-1.5 leading-relaxed">
+                  Kami tidak menyematkan script iklan pelacak perilaku (Google Ads, Facebook Pixel) atau menjual riwayat kuis belajarmu ke pihak luar.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 4: Full User Control */}
+          <div className="p-5 sm:p-6 rounded-2xl bg-white border-2 border-choco-900 shadow-[0_4px_0_#3B2218]">
+            <div className="flex items-start gap-4">
+              <div className="size-11 rounded-2xl bg-err-soft border-2 border-choco-900 flex items-center justify-center shrink-0 shadow-[0_2px_0_#3B2218]">
+                <Trash2 className="size-6 text-err-ink" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-pixel text-xs sm:text-sm font-bold text-choco-900">
+                    Hak Reset & Penghapusan Data
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full font-pixel text-[9px] font-bold bg-err-soft text-err-ink border border-choco-900">
+                    Kendali Penuh
+                  </span>
+                </div>
+                <p className="text-xs font-semibold text-choco-700 mt-1.5 leading-relaxed">
+                  Kamu bisa menghapus seluruh riwayat progres kapan saja lewat tombol Reset di menu Pengaturan. Menghapus cookie & situs data di browsermu juga akan membersihkan data lokal secara seketika.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 5: Data Undian */}
+          <div className="p-5 sm:p-6 rounded-2xl bg-white border-2 border-choco-900 shadow-[0_4px_0_#3B2218]">
+            <div className="flex items-start gap-4">
+              <div className="size-11 rounded-2xl bg-purple-100 border-2 border-choco-900 flex items-center justify-center shrink-0 shadow-[0_2px_0_#3B2218]">
+                <Shield className="size-6 text-purple-800" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-pixel text-xs sm:text-sm font-bold text-choco-900">
+                    Data Undian
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full font-pixel text-[9px] font-bold bg-purple-200 text-purple-900 border border-choco-900">
+                    Transparan
+                  </span>
+                </div>
+                <p className="text-xs font-semibold text-choco-700 mt-1.5 leading-relaxed">
+                  Jika ikut undian slot mint, kami menyimpan alamat wallet publik dan akun X. Alamat wallet pemenang diteruskan ke proyek mitra untuk allowlist. Untuk undian item, kami tidak meminta alamat wallet. Data peserta yang tidak menang dihapus 30 hari setelah undian selesai. Kami tetap tidak pernah meminta seed phrase atau private key.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 6: Pedoman Komunitas & Sensor Username */}
+          <div className="p-5 sm:p-6 rounded-2xl bg-white border-2 border-choco-900 shadow-[0_4px_0_#3B2218]">
+            <div className="flex items-start gap-4">
+              <div className="size-11 rounded-2xl bg-leaf-fill border-2 border-choco-900 flex items-center justify-center shrink-0 shadow-[0_2px_0_#3B2218]">
+                <CheckCircle2 className="size-6 text-leaf-shadow" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-pixel text-xs sm:text-sm font-bold text-choco-900">
+                    Pedoman Komunitas & Moderasi Nama
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full font-pixel text-[9px] font-bold bg-leaf-fill-deep text-leaf-deep-ink border border-choco-900">
+                    Aman
+                  </span>
+                </div>
+                <p className="text-xs font-semibold text-choco-700 mt-1.5 leading-relaxed">
+                  Username yang melanggar pedoman komunitas dapat disensor secara otomatis maupun manual oleh admin tanpa menghapus akun. Progres belajar, XP, tiket, dan koin tetap tersimpan aman.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer Navigation */}
+        <div className="mt-8 flex flex-col sm:flex-row gap-3">
+          <Link
+            to="/settings"
+            className="flex-1 py-3.5 px-5 rounded-2xl bg-white hover:bg-cream-100 text-choco-900 font-pixel font-bold text-xs border-2 border-choco-900 shadow-[0_3px_0_#3B2218] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-2 text-center"
+          >
+            <ArrowLeft className="size-4" />
+            <span>Kembali ke Pengaturan</span>
+          </Link>
+          <Link
+            to="/about"
+            className="py-3.5 px-6 rounded-2xl bg-gradient-to-b from-blush-50 to-blush-200 hover:brightness-105 text-choco-900 font-pixel font-bold text-xs border-2 border-candy-600 shadow-[0_3px_0_#B01F62] active:translate-y-0.5 cursor-pointer text-center"
+          >
+            Tentang Web3min
+          </Link>
+        </div>
       </main>
     </AppShell>
   );

@@ -1,18 +1,27 @@
 import { useCallback, useEffect, useState } from "react";
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { DuoButton } from "@/components/duo-button";
+import { ArrowRight } from "lucide-react";
 import { Mascot, SpeechBubble, TypeLine, type MascotMood } from "@/components/mascot";
 import { resumePath } from "@/lib/continue-to";
 import { playComplete } from "@/lib/audio";
-import { useProgress } from "@/lib/store";
+import { useProgress, useHydrated } from "@/lib/store";
 
 export const Route = createFileRoute("/intro")({ component: Intro });
 
 const BEATS: { mood: MascotMood; say: string }[] = [
-  { mood: "wave", say: "Mulai dari tombol hijau di Belajar. Baca dulu, baru kuis. Sekitar 3 menit." },
-  { mood: "think", say: "Salah jawab, nyawa berkurang. Habis? Buka Kisah. Tidak memakai nyawa." },
-  { mood: "proud", say: "Rute terbuka berurutan. Node terkunci = selesaikan yang sebelumnya." },
-  { mood: "idle", say: "Tidak perlu wallet. Materi edukatif, bukan saran keuangan." },
+  {
+    mood: "wave",
+    say: "Halo! Aku Blobi. Di web3min kita belajar web3 dan blockchain langkah demi langkah dengan analogi sederhana.",
+  },
+  {
+    mood: "think",
+    say: "Wallet itu mirip dompet fisik: kuncinya kamu sendiri yang pegang. Jika salah kuis nyawa berkurang, tapi bisa diisi ulang atau lanjut membaca Kisah.",
+  },
+  {
+    mood: "proud",
+    say: "Selesaikan tiap blok secara konsisten, kumpulkan koin, jaga streak rantai kamu, dan dapatkan tiket undian hadiah!",
+  },
 ];
 
 function Intro() {
@@ -20,6 +29,7 @@ function Intro() {
   const introSeen = useProgress((s) => s.introSeen);
   const completeIntro = useProgress((s) => s.completeIntro);
   const sound = useProgress((s) => s.sound);
+  const hydrated = useHydrated();
   const navigate = useNavigate();
   const router = useRouter();
   const [beat, setBeat] = useState(0);
@@ -33,9 +43,15 @@ function Intro() {
   }, [completeIntro, router]);
 
   useEffect(() => {
-    if (!onboarded) void navigate({ to: "/onboarding" });
-    else if (introSeen) leave();
-  }, [onboarded, introSeen, navigate, leave]);
+    // Tunggu rehydrate dulu (efek anak jalan sebelum efek induk) supaya user
+    // yang sudah daftar tidak terlempar ke /onboarding saat buka /intro langsung.
+    if (!hydrated) return;
+    // Baca nilai TERKINI: `onboarded` dari render ini bisa tertinggal satu render
+    // saat rehydrate selesai (lihat catatan di lesson.$lessonId.tsx).
+    const live = useProgress.getState();
+    if (!live.onboarded) void navigate({ to: "/onboarding" });
+    else if (live.introSeen) leave();
+  }, [hydrated, onboarded, introSeen, navigate, leave]);
 
   useEffect(() => {
     setDoneTyping(false);
@@ -54,25 +70,58 @@ function Intro() {
     setBeat((n) => n + 1);
   }
 
-  if (!onboarded || introSeen) return null;
+  if (!hydrated || !onboarded || introSeen) return null;
 
   return (
-    <main className="hex-wash relative mx-auto flex min-h-dvh max-w-lg flex-col overflow-y-auto bg-bg px-5 py-8">
-      <div className="flex justify-end">
-        <button type="button" className="min-h-11 text-sm font-bold text-muted" onClick={leave}>
-          Lewati
-        </button>
-      </div>
-      <div key={beat} className="enter-up flex flex-1 flex-col items-center justify-center pt-2">
-        <Mascot key={current.mood + String(beat)} mood={current.mood} size={200} float className="blobi-pop" />
-        <SpeechBubble className="mt-3 w-full">
-          <button type="button" className="w-full text-left" onClick={next}>
-            {doneTyping ? current.say : <TypeLine text={current.say} onDone={() => setDoneTyping(true)} />}
+    <main className="relative flex min-h-screen w-full flex-col items-center justify-center bg-cream px-4 py-8 select-none overflow-hidden">
+      <div className="relative z-10 w-full max-w-md flex flex-col items-center">
+        {/* Skip button on top right */}
+        <div className="w-full flex justify-end mb-4">
+          <button
+            type="button"
+            className="px-4 py-1 min-h-11 rounded-xl bg-cream hover:bg-candy-100 text-xs font-pixel font-bold text-choco-900 border-2 border-choco-900 shadow-[0_2px_0_#3B2218] transition-[transform,box-shadow] active:translate-y-[1px] active:shadow-none cursor-pointer"
+            onClick={leave}
+          >
+            Lewati
           </button>
-        </SpeechBubble>
-        <DuoButton wide className="mt-8" onClick={next}>
-          {last ? "Mulai belajar" : "Lanjut"}
-        </DuoButton>
+        </div>
+
+        {/* Mascot & Speech Bubble */}
+        <div key={beat} className="w-full flex flex-col items-center">
+          <div className="py-2">
+            <Mascot key={current.mood + String(beat)} mood={current.mood} size={180} float className="blobi-pop" />
+          </div>
+
+          <div className="w-full mt-4">
+            <SpeechBubble className="w-full border-2 border-choco-900 bg-white shadow-[0_6px_0_#3B2218] p-5 rounded-2xl">
+              <button type="button" className="w-full text-left font-display text-sm sm:text-base font-bold text-choco-900 cursor-pointer leading-relaxed" onClick={next}>
+                {doneTyping ? current.say : <TypeLine text={current.say} onDone={() => setDoneTyping(true)} />}
+              </button>
+            </SpeechBubble>
+          </div>
+
+          {/* Step indicator dots */}
+          <div className="flex items-center gap-2.5 mt-6">
+            {BEATS.map((_, i) => (
+              <span
+                key={i}
+                className={`h-3 rounded-full border-2 border-choco-900 transition-all duration-200 ${
+                  i === beat ? "w-8 bg-candy-500 shadow-[0_2px_0_#3B2218]" : "w-3 bg-white"
+                }`}
+              />
+            ))}
+          </div>
+
+          <div className="w-full mt-6">
+            <button
+              type="button"
+              onClick={next}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-2xl border-2 border-candy-600 bg-gradient-to-b from-blush-50 to-blush-200 hover:brightness-105 py-4 px-6 font-pixel text-xs sm:text-sm font-bold text-choco-900 shadow-[0_5px_0_#B01F62] active:translate-y-1 active:shadow-[0_1px_0_#B01F62] transition-all cursor-pointer"
+            >
+              {last ? "Mulai Belajar Sekarang" : "Lanjut"}
+            </button>
+          </div>
+        </div>
       </div>
     </main>
   );

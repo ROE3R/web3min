@@ -1,26 +1,71 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { useEffect, useState } from "react";
 import { getLesson, isUnlocked } from "@/lib/curriculum";
 import { ACCESSORY_BY_ID, featuredOf, sanitizeWorn, type Worn } from "@/lib/accessories";
 import { FREEZE_COST, HEART_REFILL_COST, OUTFIT_LABEL, SHOP_ITEMS } from "@/lib/shop";
 import { QUESTS, questProgress } from "@/lib/quests";
 import { getCase, getStory, isOpen, knownCaseIds, knownStoryIds } from "@/lib/stories";
 import { sanitizeBio, sanitizeShout, sanitizeTwitter, sanitizeUsername, type Shout } from "@/lib/people";
-import { todayKey, weekId, yesterdayKey } from "@/lib/utils";
+import { daysBetween, todayKey, weekId, yesterdayKey } from "@/lib/time";
+import { INITIAL_RAFFLES, RAFFLE_TICKET_PRICE } from "@/lib/raffles";
+import { recordDayActivity } from "@/lib/activity-history";
+import { getCoinRewardForRank } from "@/lib/leaderboard-prizes";
+import { rpcBuyTickets, rpcEnterRaffle, rpcUpdateRaffleWallet, rpcClaimWeeklyLeaderboardReward, rpcChangeUsername } from "@/lib/server-sync";
+import { isValidEvmAddress } from "@/lib/wallet";
 
 export type DailyGoal = 10 | 20 | 30 | 50;
+
+/**
+ * Apakah localStorage sudah selesai dibaca?
+ *
+ * Store memakai `skipHydration`, jadi render pertama (server + klien) selalu
+ * memakai nilai default — `onboarded: false`. Rute yang menjaga akses di dalam
+ * `useEffect` (lesson, bedah, intro) berjalan LEBIH DULU daripada efek induk
+ * yang me-rehydrate, karena React menjalankan efek anak sebelum efek induk.
+ * Akibatnya user yang sudah login tapi membuka tautan langsung
+ * `/lesson/u1-l1` dilempar ke `/onboarding` lalu ke `/` — dua hop itu terlihat
+ * persis di rekaman history: `pushState /onboarding` → `pushState /`.
+ *
+ * Rute WAJIB menunggu flag ini sebelum memutuskan redirect, dan harus
+ * berlangganan (`useHydrated`) — bukan membaca sekali — karena efek anak
+ * berjalan sebelum rehydrate selesai.
+ */
+const hydratedListeners = new Set<() => void>();
+export const hydration: { ready: boolean; subscribe: (fn: () => void) => () => void } = {
+  ready: false,
+  subscribe(fn: () => void) {
+    hydratedListeners.add(fn);
+    return () => hydratedListeners.delete(fn);
+  },
+};
+
+export function markHydrated() {
+  if (hydration.ready) return;
+  hydration.ready = true;
+  for (const fn of hydratedListeners) fn();
+}
+
+/** Dipakai rute: `const hydrated = useHydrated();` lalu jangan redirect sebelum true. */
+export function useHydrated(): boolean {
+  const [ready, setReady] = useState(hydration.ready);
+  useEffect(() => {
+    if (hydration.ready) return;
+    return hydration.subscribe(() => setReady(true));
+  }, []);
+  return ready;
+}
 
 export const MAX_HEARTS = 5;
 export const HEART_MS = 20 * 60 * 1000;
 export const GEM_CAP = 999_999;
-export const UNLIMITED_GEMS = true;
+export const STARTING_GEMS = 50;
 
 export function formatGems(n: number) {
-  return UNLIMITED_GEMS ? "∞" : String(n);
+  return String(n);
 }
 
 function holdGems(current: number, delta = 0) {
-  if (UNLIMITED_GEMS) return GEM_CAP;
   return Math.min(GEM_CAP, Math.max(0, current + delta));
 }
 
@@ -43,6 +88,7 @@ export type ProgressState = {
   onboarded: boolean;
   username: string;
   twitter: string;
+  discord?: string;
   friends: string[];
   friendMeta: Record<string, FriendMeta>;
   bio: string;
@@ -50,6 +96,7 @@ export type ProgressState = {
   dailyGoal: DailyGoal;
   xp: number;
   gems: number;
+  coinResetV1?: boolean;
   hearts: number;
   heartsUpdatedAt: number;
   streak: number;
@@ -62,6 +109,7 @@ export type ProgressState = {
   completed: string[];
   perfect: string[];
   outfits: string[];
+  badges?: string[];
   equipped: string | null;
   worn: Worn;
   sound: boolean;
@@ -75,6 +123,13 @@ export type ProgressState = {
   completedCases: string[];
   guideSeen: boolean;
   coachSeen: boolean;
+  /** U6: ajakan akun di layar selesai blok pertama sudah pernah tampil. */
+  accountNudgeSeen: boolean;
+  raffleTickets: number;
+  enteredRaffles: Record<string, { count: number; enteredAt: number; discord?: string; xHandle?: string; walletAddress?: string }>;
+  lastWalletAddress?: string;
+  usernameCensored?: boolean;
+  lastClaimedLeaderboardWeek?: string;
 };
 
 export function needsCoach(s: Pick<ProgressState, "coachSeen" | "completed">) {
@@ -86,15 +141,21 @@ type Actions = {
   completeOnboarding: (username: string, dailyGoal: DailyGoal) => void;
   completeIntro: () => void;
   completeGuide: () => void;
+  markAccountNudgeSeen: () => void;
   setUsername: (username: string) => void;
+  updateUsername: (newUsername: string) => Promise<{ success: boolean; error?: string }>;
   setTwitter: (handle: string) => boolean;
+  setDiscord: (handle: string) => boolean;
   addFriend: (username: string, twitter?: string) => boolean;
   removeFriend: (username: string) => void;
   setBio: (bio: string) => void;
   addShout: (text: string) => boolean;
   loseHeart: () => void;
   refillHearts: () => boolean;
-  completeLesson: (id: string, info: { perfect: boolean }) => void;
+  completeLesson: (
+    id: string,
+    info: { perfect: boolean },
+  ) => { xp: number; gems: number; perfect: boolean; replay: boolean };
   claimChest: (id: string) => boolean;
   buyOutfit: (id: string) => boolean;
   equipOutfit: (id: string | null) => void;
@@ -103,6 +164,11 @@ type Actions = {
   claimQuest: (id: string) => boolean;
   completeStory: (id: string) => { xp: number; gems: number } | null;
   completeCase: (id: string) => { xp: number; gems: number } | null;
+  enterRaffle: (raffleId: string, count: number, walletAddress?: string, xHandle?: string) => Promise<{ success: boolean; error?: string }>;
+  updateRaffleWallet: (raffleId: string, walletAddress: string, xHandle?: string) => Promise<{ success: boolean; error?: string }>;
+  buyRaffleTicketsWithGems: (ticketAmount: number) => boolean;
+  claimWeeklyLeaderboardReward: (weekKey: string, rank: number) => { success: boolean; coins: number };
+  addRaffleTicket: (count?: number) => void;
   reset: () => void;
   setSound: (on: boolean) => void;
   setReduceMotion: (on: boolean) => void;
@@ -112,13 +178,15 @@ const initial: ProgressState = {
   onboarded: false,
   username: "",
   twitter: "",
+  discord: "",
   friends: [],
   friendMeta: {},
   bio: "",
   shouts: [],
   dailyGoal: 20,
   xp: 0,
-  gems: GEM_CAP,
+  gems: STARTING_GEMS,
+  coinResetV1: true,
   hearts: MAX_HEARTS,
   heartsUpdatedAt: Date.now(),
   streak: 0,
@@ -131,6 +199,7 @@ const initial: ProgressState = {
   completed: [],
   perfect: [],
   outfits: [],
+  badges: [],
   equipped: null,
   worn: {},
   sound: true,
@@ -138,17 +207,26 @@ const initial: ProgressState = {
   introSeen: false,
   guideSeen: false,
   coachSeen: false,
+  accountNudgeSeen: false,
   lessonsToday: 0,
   perfectToday: 0,
   storiesToday: 0,
   claimedQuests: [],
   completedStories: [],
   completedCases: [],
+  raffleTickets: 3,
+  enteredRaffles: {},
+  lastClaimedLeaderboardWeek: "",
 };
 
 function clamp(n: unknown, min: number, max: number, fallback: number) {
   const x = typeof n === "number" && Number.isFinite(n) ? Math.trunc(n) : fallback;
   return Math.min(max, Math.max(min, x));
+}
+
+export function clampRuntime(v: number, min: number, max: number) {
+  if (!Number.isFinite(v)) return min;
+  return Math.min(max, Math.max(min, Math.trunc(v)));
 }
 
 function knownIds(ids: unknown): string[] {
@@ -202,6 +280,25 @@ function sanitizeShouts(raw: unknown): Shout[] {
   return rows.slice(0, 20);
 }
 
+function sanitizeEnteredRaffles(raw: unknown): Record<string, { count: number; enteredAt: number; discord?: string; xHandle?: string; walletAddress?: string }> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, { count: number; enteredAt: number; discord?: string; xHandle?: string; walletAddress?: string }> = {};
+  for (const [id, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (!id || typeof id !== "string" || !val || typeof val !== "object") continue;
+    const v = val as { count?: unknown; enteredAt?: unknown; discord?: unknown; xHandle?: unknown; walletAddress?: unknown };
+    const count = clamp(v.count, 0, 9999, 0);
+    if (count <= 0) continue;
+    out[id] = {
+      count,
+      enteredAt: typeof v.enteredAt === "number" && Number.isFinite(v.enteredAt) ? v.enteredAt : Date.now(),
+      discord: typeof v.discord === "string" ? v.discord : undefined,
+      xHandle: typeof v.xHandle === "string" ? v.xHandle : undefined,
+      walletAddress: typeof v.walletAddress === "string" ? v.walletAddress : undefined,
+    };
+  }
+  return out;
+}
+
 function sanitizeState(raw: (Partial<ProgressState> & { name?: string }) | undefined): ProgressState {
   if (!raw || typeof raw !== "object") return { ...initial, heartsUpdatedAt: Date.now() };
   const daily = raw.dailyGoal;
@@ -219,11 +316,14 @@ function sanitizeState(raw: (Partial<ProgressState> & { name?: string }) | undef
   const twitter = sanitizeTwitter(raw.twitter);
   const friendMeta = sanitizeMeta(raw.friendMeta);
   const friends = sanitizeFriends(raw.friends, username);
+  const coinResetDone = Boolean((raw as { coinResetV1?: unknown })?.coinResetV1);
+  const currentGems = coinResetDone && typeof raw.gems === "number" ? raw.gems : STARTING_GEMS;
   return {
     onboarded: Boolean(raw.onboarded),
     introSeen: Boolean(raw.introSeen),
     guideSeen: Boolean(raw.guideSeen),
     coachSeen: Boolean(raw.coachSeen),
+    accountNudgeSeen: Boolean(raw.accountNudgeSeen),
     username,
     twitter,
     friends,
@@ -232,7 +332,8 @@ function sanitizeState(raw: (Partial<ProgressState> & { name?: string }) | undef
     shouts: sanitizeShouts(raw.shouts),
     dailyGoal,
     xp: clamp(raw.xp, 0, 5_000_000, 0),
-    gems: holdGems(typeof raw.gems === "number" ? raw.gems : GEM_CAP),
+    gems: holdGems(currentGems),
+    coinResetV1: true,
     hearts: clamp(raw.hearts, 0, MAX_HEARTS, MAX_HEARTS),
     heartsUpdatedAt: typeof raw.heartsUpdatedAt === "number" && raw.heartsUpdatedAt > 0 ? raw.heartsUpdatedAt : Date.now(),
     streak: clamp(raw.streak, 0, 10_000, 0),
@@ -253,10 +354,14 @@ function sanitizeState(raw: (Partial<ProgressState> & { name?: string }) | undef
     perfectToday: clamp(raw.perfectToday, 0, 50, 0),
     storiesToday: clamp(raw.storiesToday, 0, 50, 0),
     claimedQuests: Array.isArray(raw.claimedQuests)
-      ? raw.claimedQuests.filter((id): id is string => typeof id === "string").slice(0, 8)
+      ? raw.claimedQuests
+          .filter((id): id is string => typeof id === "string" && QUESTS.some((q) => q.id === id))
+          .slice(0, 8)
       : [],
     completedStories: knownStoryIds(raw.completedStories),
     completedCases: knownCaseIds(raw.completedCases),
+    raffleTickets: clamp(raw.raffleTickets, 0, 9999, 3),
+    enteredRaffles: sanitizeEnteredRaffles(raw.enteredRaffles),
   };
 }
 
@@ -292,21 +397,32 @@ function rollDay(state: ProgressState): ProgressState {
 function touchStreak(state: ProgressState): ProgressState {
   const today = todayKey();
   if (state.lastActiveDate === today) return state;
-  if (state.lastActiveDate === yesterdayKey()) {
-    return { ...state, streak: state.streak + 1, lastActiveDate: today };
-  }
   if (!state.lastActiveDate) {
     return { ...state, streak: 1, lastActiveDate: today };
   }
-  if (state.streakFreeze > 0) {
-    return {
-      ...state,
-      streakFreeze: state.streakFreeze - 1,
-      lastActiveDate: today,
-      streak: Math.max(1, state.streak),
-    };
+  const gap = daysBetween(state.lastActiveDate, today);
+  if (gap === 1) {
+    return { ...state, streak: state.streak + 1, lastActiveDate: today };
   }
-  return { ...state, streak: 1, lastActiveDate: today };
+  if (gap > 1) {
+    const needed = gap - 1;
+    if (state.streakFreeze >= needed) {
+      return {
+        ...state,
+        streakFreeze: state.streakFreeze - needed,
+        streak: state.streak,
+        lastActiveDate: today,
+      };
+    } else {
+      return {
+        ...state,
+        streak: 1,
+        streakFreeze: 0,
+        lastActiveDate: today,
+      };
+    }
+  }
+  return state;
 }
 
 export const useProgress = create<ProgressState & Actions>()(
@@ -329,7 +445,7 @@ export const useProgress = create<ProgressState & Actions>()(
           introSeen: true,
           username: clean,
           dailyGoal: goal,
-          gems: GEM_CAP,
+          gems: STARTING_GEMS,
           hearts: MAX_HEARTS,
         });
       },
@@ -342,13 +458,30 @@ export const useProgress = create<ProgressState & Actions>()(
         if (s.coachSeen && s.guideSeen) return;
         set({ guideSeen: true, coachSeen: true });
       },
+      markAccountNudgeSeen: () => {
+        if (get().accountNudgeSeen) return;
+        set({ accountNudgeSeen: true });
+      },
       setUsername: (username) => {
         const clean = sanitizeUsername(username);
         if (clean.length < 3) return;
         set({ username: clean, friends: get().friends.filter((id) => id !== clean) });
       },
+      updateUsername: async (newUsername) => {
+        const res = await rpcChangeUsername(newUsername);
+        if (res.success && res.username) {
+          set({ username: res.username, usernameCensored: false });
+          return { success: true };
+        }
+        return { success: false, error: res.error || "Gagal mengganti username" };
+      },
       setTwitter: (handle) => {
         set({ twitter: sanitizeTwitter(handle) });
+        return true;
+      },
+      setDiscord: (handle) => {
+        const clean = handle.trim().slice(0, 64);
+        set({ discord: clean });
         return true;
       },
       addFriend: (username, twitter) => {
@@ -388,25 +521,36 @@ export const useProgress = create<ProgressState & Actions>()(
       },
       refillHearts: () => {
         const s = get();
-        if (!UNLIMITED_GEMS && s.gems < HEART_REFILL_COST) return false;
+        if (s.gems < HEART_REFILL_COST) return false;
         set({ gems: holdGems(s.gems, -HEART_REFILL_COST), hearts: MAX_HEARTS, heartsUpdatedAt: Date.now() });
         return true;
       },
       completeLesson: (id, info) => {
+        const s0 = get();
+        const lesson = getLesson(id);
+        if (!lesson || lesson.kind === "chest") {
+          return { xp: 0, gems: 0, perfect: false, replay: false };
+        }
+        const already = s0.completed.includes(id);
+        if (!already && !isUnlocked(id, s0.completed)) {
+          return { xp: 0, gems: 0, perfect: false, replay: false };
+        }
+        const xpGain = already ? Math.min(2, lesson.xp) : lesson.xp + (info.perfect ? 8 : 0);
+        const dailyXpGain = already ? 0 : xpGain;
+        const gemGain = already ? 0 : lesson.gems + (info.perfect ? 2 : 0);
+        const ticketGain = already ? 0 : 1 + (info.perfect ? 1 : 0);
+        if (dailyXpGain > 0 || !already) {
+          recordDayActivity(todayKey(), dailyXpGain, already ? 0 : 1);
+        }
         set((s) => {
-          const lesson = getLesson(id);
-          if (!lesson || lesson.kind === "chest") return s;
-          const already = s.completed.includes(id);
-          if (!already && !isUnlocked(id, s.completed)) return s;
           let next = touchStreak(rollDay(regenHearts(s)));
-          const xpGain = already ? Math.min(2, lesson.xp) : lesson.xp + (info.perfect ? 8 : 0);
-          const gemGain = already ? 0 : lesson.gems + (info.perfect ? 2 : 0);
-          next = {
+          return {
             ...next,
-            xp: next.xp + xpGain,
+            xp: clampRuntime(next.xp + xpGain, 0, 5_000_000),
             gems: holdGems(next.gems, gemGain),
-            xpToday: next.xpToday + xpGain,
-            weeklyXp: next.weeklyXp + xpGain,
+            raffleTickets: Math.min(9999, (next.raffleTickets ?? 0) + ticketGain),
+            xpToday: clampRuntime(next.xpToday + dailyXpGain, 0, 10_000),
+            weeklyXp: clampRuntime(next.weeklyXp + dailyXpGain, 0, 1_000_000),
             completed: already ? next.completed : [...next.completed, id],
             perfect:
               info.perfect && !next.perfect.includes(id) ? [...next.perfect, id] : next.perfect,
@@ -416,8 +560,8 @@ export const useProgress = create<ProgressState & Actions>()(
             guideSeen: true,
             coachSeen: true,
           };
-          return next;
         });
+        return { xp: xpGain, gems: gemGain, perfect: info.perfect, replay: already };
       },
       claimChest: (id) => {
         const s = get();
@@ -438,11 +582,13 @@ export const useProgress = create<ProgressState & Actions>()(
         const slot = ACCESSORY_BY_ID[id]?.slot;
         if (!slot) return false;
         if (s.outfits.includes(id)) {
-          const worn = { ...s.worn, [slot]: id };
+          const worn = { ...s.worn };
+          if (worn[slot] === id) delete worn[slot];
+          else worn[slot] = id;
           set({ worn, equipped: featuredOf(worn) });
           return true;
         }
-        if (!UNLIMITED_GEMS && s.gems < item.cost) return false;
+        if (s.gems < item.cost) return false;
         const worn = { ...s.worn, [slot]: id };
         set({
           gems: holdGems(s.gems, -item.cost),
@@ -470,7 +616,7 @@ export const useProgress = create<ProgressState & Actions>()(
       },
       buyFreeze: () => {
         const s = get();
-        if (!UNLIMITED_GEMS && s.gems < FREEZE_COST) return false;
+        if (s.gems < FREEZE_COST) return false;
         set({ gems: holdGems(s.gems, -FREEZE_COST), streakFreeze: Math.min(30, s.streakFreeze + 1) });
         return true;
       },
@@ -501,11 +647,11 @@ export const useProgress = create<ProgressState & Actions>()(
           awarded = { xp: xpGain, gems: gemGain };
           return {
             ...next,
-            xp: next.xp + xpGain,
+            xp: clampRuntime(next.xp + xpGain, 0, 5_000_000),
             gems: holdGems(next.gems, gemGain),
-            xpToday: next.xpToday + xpGain,
-            weeklyXp: next.weeklyXp + xpGain,
-            storiesToday: next.storiesToday + 1,
+            xpToday: clampRuntime(next.xpToday + xpGain, 0, 10_000),
+            weeklyXp: clampRuntime(next.weeklyXp + xpGain, 0, 1_000_000),
+            storiesToday: already ? next.storiesToday : next.storiesToday + 1,
             completedStories: already ? next.completedStories : [...next.completedStories, id],
           };
         });
@@ -524,15 +670,122 @@ export const useProgress = create<ProgressState & Actions>()(
           awarded = { xp: xpGain, gems: gemGain };
           return {
             ...next,
-            xp: next.xp + xpGain,
+            xp: clampRuntime(next.xp + xpGain, 0, 5_000_000),
             gems: holdGems(next.gems, gemGain),
-            xpToday: next.xpToday + xpGain,
-            weeklyXp: next.weeklyXp + xpGain,
-            storiesToday: next.storiesToday + 1,
+            xpToday: clampRuntime(next.xpToday + xpGain, 0, 10_000),
+            weeklyXp: clampRuntime(next.weeklyXp + xpGain, 0, 1_000_000),
+            storiesToday: already ? next.storiesToday : next.storiesToday + 1,
             completedCases: already ? next.completedCases : [...next.completedCases, id],
           };
         });
         return awarded;
+      },
+      enterRaffle: async (raffleId, count, walletAddress, xHandle = "") => {
+        const s = get();
+        const qty = Math.trunc(count);
+        if (!Number.isFinite(qty) || qty <= 0 || (s.raffleTickets ?? 0) < qty) {
+          return { success: false, error: "Tiket tidak mencukupi" };
+        }
+        const cleanWallet = walletAddress ? walletAddress.trim().toLowerCase() : "";
+        if (cleanWallet && !isValidEvmAddress(cleanWallet)) {
+          return { success: false, error: "Alamat wallet EVM tidak valid" };
+        }
+        const currentEntry = s.enteredRaffles?.[raffleId];
+        const currentCount = currentEntry?.count ?? 0;
+        const cleanX = xHandle.trim().replace(/^@+/, "").slice(0, 64);
+
+        set({
+          raffleTickets: (s.raffleTickets ?? 0) - qty,
+          ...(cleanWallet ? { lastWalletAddress: cleanWallet } : {}),
+          enteredRaffles: {
+            ...s.enteredRaffles,
+            [raffleId]: {
+              count: currentCount + qty,
+              enteredAt: Date.now(),
+              walletAddress: cleanWallet || currentEntry?.walletAddress || "",
+              xHandle: cleanX || currentEntry?.xHandle || "",
+            },
+          },
+          ...(cleanX ? { twitter: cleanX } : {}),
+        });
+
+        // Server sync
+        const res = await rpcEnterRaffle(raffleId, qty, cleanWallet, cleanX);
+        if (!res.success) {
+          // Rollback optimistic deduction if server RPC failed
+          const curr = get();
+          set({
+            raffleTickets: (curr.raffleTickets ?? 0) + qty,
+            enteredRaffles: {
+              ...curr.enteredRaffles,
+              ...(currentEntry
+                ? { [raffleId]: currentEntry }
+                : { [raffleId]: undefined as unknown as typeof currentEntry }),
+            },
+          });
+        }
+        return res;
+      },
+      updateRaffleWallet: async (raffleId, walletAddress, xHandle = "") => {
+        const s = get();
+        const cleanWallet = walletAddress.trim().toLowerCase();
+        if (!isValidEvmAddress(cleanWallet)) {
+          return { success: false, error: "Alamat wallet EVM tidak valid" };
+        }
+        const currentEntry = s.enteredRaffles?.[raffleId];
+        if (!currentEntry) {
+          return { success: false, error: "Belum terdaftar di undian ini" };
+        }
+        const cleanX = xHandle.trim().replace(/^@+/, "").slice(0, 64);
+        set({
+          lastWalletAddress: cleanWallet,
+          enteredRaffles: {
+            ...s.enteredRaffles,
+            [raffleId]: {
+              ...currentEntry,
+              walletAddress: cleanWallet,
+              xHandle: cleanX || currentEntry.xHandle || "",
+            },
+          },
+          ...(cleanX ? { twitter: cleanX } : {}),
+        });
+        const res = await rpcUpdateRaffleWallet(raffleId, cleanWallet, cleanX);
+        return res;
+      },
+      buyRaffleTicketsWithGems: (ticketAmount) => {
+        const s = get();
+        const qty = Math.trunc(ticketAmount);
+        if (!Number.isFinite(qty) || qty <= 0) return false;
+        const cost = qty * RAFFLE_TICKET_PRICE;
+        if (s.gems < cost) return false;
+        const newTickets = Math.min(9999, (s.raffleTickets ?? 0) + qty);
+        set({
+          gems: holdGems(s.gems, -cost),
+          raffleTickets: newTickets,
+        });
+        // Database sync in background
+        void rpcBuyTickets(qty);
+        return true;
+      },
+      claimWeeklyLeaderboardReward: (weekKey, rank) => {
+        const s = get();
+        if (s.lastClaimedLeaderboardWeek === weekKey) {
+          return { success: false, coins: 0 };
+        }
+        const coins = getCoinRewardForRank(rank);
+        if (coins <= 0) return { success: false, coins: 0 };
+        set({
+          gems: (s.gems ?? 0) + coins,
+          lastClaimedLeaderboardWeek: weekKey,
+        });
+        // Database sync in background
+        void rpcClaimWeeklyLeaderboardReward(rank);
+        return { success: true, coins };
+      },
+      addRaffleTicket: (count = 1) => {
+        const qty = Math.trunc(count);
+        if (!Number.isFinite(qty) || qty <= 0) return;
+        set((s) => ({ raffleTickets: Math.min(9999, (s.raffleTickets ?? 0) + qty) }));
       },
       reset: () => set({ ...initial, heartsUpdatedAt: Date.now() }),
       setSound: (on) => set({ sound: Boolean(on) }),
@@ -540,11 +793,25 @@ export const useProgress = create<ProgressState & Actions>()(
     }),
     {
       name: "web3min-v2",
+      version: 2,
+      migrate: (persistedState: unknown) => {
+        if (!persistedState) return persistedState;
+        if (typeof persistedState === "object" && "state" in (persistedState as Record<string, unknown>)) {
+          return (persistedState as { state: unknown }).state;
+        }
+        return persistedState;
+      },
       skipHydration: true,
-      merge: (persisted, current) => ({
-        ...current,
-        ...sanitizeState(persisted as Partial<ProgressState>),
-      }),
+      merge: (persisted, current) => {
+        const raw =
+          persisted && typeof persisted === "object" && "state" in (persisted as Record<string, unknown>)
+            ? (persisted as { state: unknown }).state
+            : persisted;
+        return {
+          ...current,
+          ...sanitizeState(raw as Partial<ProgressState>),
+        };
+      },
     },
   ),
 );

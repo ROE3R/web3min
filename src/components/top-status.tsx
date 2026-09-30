@@ -1,54 +1,196 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
+import { Menu, Sparkles } from "lucide-react";
 import { Fire, Heart } from "@/lib/kicon";
-import { BrandMark } from "@/components/brand-mark";
-import { BlockStamp } from "@/components/motif";
+import { BlockStamp, CoinIcon } from "@/components/motif";
 import { MAX_HEARTS, formatGems, useProgress } from "@/lib/store";
+import { useNavStore } from "@/lib/nav-store";
+import { playTap } from "@/lib/audio";
 import { cn } from "@/lib/utils";
+
+const pillBase =
+  "relative flex h-11 shrink-0 items-center gap-1 sm:gap-1.5 rounded-full border-2 border-choco-900/20 bg-gradient-to-b from-white via-cream-fill to-cream-fill-deep px-2 sm:px-2.5 text-xs sm:text-sm font-bold text-choco-900 shadow-[0_2.5px_0_#3B2218,0_4px_8px_rgba(59,34,24,0.06)] transition-all duration-100 ease-out active:scale-95 active:translate-y-0.5";
+
+function StatPill({
+  value,
+  display,
+  icon,
+  title,
+  floatColor = "var(--color-lemon-deep)",
+}: {
+  value: number;
+  display?: ReactNode;
+  icon: ReactNode;
+  title: string;
+  floatColor?: string;
+}) {
+  const prev = useRef(value);
+  const [delta, setDelta] = useState(0);
+  const [bump, setBump] = useState(false);
+
+  useEffect(() => {
+    const gained = value - prev.current;
+    prev.current = value;
+    if (gained <= 0) return;
+    setDelta(gained);
+    setBump(true);
+    const a = setTimeout(() => setDelta(0), 900);
+    const b = setTimeout(() => setBump(false), 420);
+    return () => {
+      clearTimeout(a);
+      clearTimeout(b);
+    };
+  }, [value]);
+
+  return (
+    <div
+      title={title}
+      aria-label={title}
+      role="img"
+      className={pillBase}
+      style={{
+        animation: bump ? "pill-bump 420ms var(--ease-back)" : undefined,
+      }}
+    >
+      <span className="grid size-4 shrink-0 place-items-center">{icon}</span>
+      <span className="font-sans font-black text-xs sm:text-sm text-choco-900 tabular-nums tracking-tight leading-none">
+        {display ?? value}
+      </span>
+      {delta > 0 && (
+        <span
+          className="pill-float"
+          style={{
+            color: floatColor,
+            textShadow: "0 1px 0 var(--color-choco-900)",
+          }}
+        >
+          +{delta}
+        </span>
+      )}
+    </div>
+  );
+}
 
 export function TopStatus({ brand = true }: { brand?: boolean }) {
   const streak = useProgress((s) => s.streak);
   const gems = useProgress((s) => s.gems);
+  const xp = useProgress((s) => s.xp);
   const hearts = useProgress((s) => s.hearts);
+  const sound = useProgress((s) => s.sound);
+
+  const isNavOpen = useNavStore((s) => s.isOpen);
+  const toggleNav = useNavStore((s) => s.toggle);
 
   return (
-    <header className="status-bar">
-      {brand ? <BrandMark className="mr-auto min-w-0 lg:hidden" /> : <span className="mr-auto" />}
-      <span className="mr-auto hidden lg:block" />
-      <Stat icon={<Fire className="size-4" weight="fill" />} value={streak} label="Streak" className="text-streak" />
-      <Stat icon={<BlockStamp size={16} />} value={formatGems(gems)} label="Bintang" className="text-gold" />
-      <Stat
-        icon={<Heart className="size-4" weight="fill" />}
-        value={`${hearts}/${MAX_HEARTS}`}
-        label="Nyawa"
-        className="text-blob"
-        mark="hearts"
-      />
+    <header className="sticky top-0 z-30 flex min-h-14 sm:min-h-16 select-none items-center gap-2 border-b-2 border-choco-900 bg-cream/95 px-3 pt-[env(safe-area-inset-top)] pb-1 sm:pb-0 backdrop-blur-xl shadow-[0_2px_0_rgba(59,34,24,0.06)] sm:px-5">
+      {brand && (
+        <div className="flex items-center gap-2">
+          {/* ─────────────────────────────────────────────────────────────
+              DESKTOP ONLY MENU TRIGGER: "hidden lg:flex"
+              Requirement: "untuk versi mobil tidak ada overlay"
+              On mobile (< lg), this button does NOT render at all.
+             ───────────────────────────────────────────────────────────── */}
+          <button
+            type="button"
+            aria-label={isNavOpen ? "Sembunyikan Menu" : "Buka Menu Utama"}
+            title="Menu Utama (Buka / Sembunyikan)"
+            onClick={() => {
+              if (sound) playTap();
+              toggleNav();
+            }}
+            className={cn(
+              pillBase,
+              "hidden lg:flex gap-1.5 px-3 text-choco-900 hover:bg-candy-100 cursor-pointer active:translate-y-0.5",
+              isNavOpen && "bg-candy-100 border-candy-500 text-candy-700"
+            )}
+          >
+            <Menu className="size-4 text-candy-500" />
+            <span className="font-pixel text-xs font-bold">
+              Menu
+            </span>
+          </button>
+
+          {/* Brand Logo & Title: Visible on all viewports */}
+          <Link
+            to="/"
+            aria-label="Beranda"
+            className="flex shrink-0 items-center gap-2 min-h-11 min-w-11 py-1"
+          >
+            <span className="grid size-8 sm:size-9 place-items-center rounded-full border-2 border-choco-900 bg-candy-100 shadow-[0_2px_0_#3B2218]">
+              <img
+                src="/mascot/idle.png"
+                alt=""
+                width={256}
+                height={256}
+                className="pixelated size-5 sm:size-6 object-contain"
+              />
+            </span>
+            <span className="font-pixel text-base sm:text-lg font-bold text-choco-900 max-[379px]:hidden">
+              web3<span className="text-candy-700">min</span>
+            </span>
+          </Link>
+        </div>
+      )}
+
+      {/* Resource Stats Pills & Controls */}
+      <div className="ml-auto min-w-0 flex items-center gap-1 sm:gap-1.5 md:gap-2">
+        <div className="hidden sm:block">
+          <StatPill
+            value={xp}
+            title={`${xp} Total XP`}
+            icon={<Sparkles className="size-3.5 text-candy-500 fill-candy-500" />}
+            floatColor="var(--color-candy-500)"
+          />
+        </div>
+
+        <StatPill
+          value={streak}
+          title={`${streak} hari beruntun`}
+          icon={
+            <Fire
+              className={cn("size-3.5", streak > 0 ? "text-flame-500" : "text-choco-900/40")}
+              weight={streak > 0 ? "fill" : "regular"}
+            />
+          }
+          floatColor="var(--color-flame-500)"
+        />
+
+        <StatPill
+          value={gems}
+          display={formatGems(gems)}
+          title={`${gems} Koin`}
+          icon={<CoinIcon size={18} />}
+          floatColor="var(--color-lemon-deep)"
+        />
+
+        <Link
+          to="/shop"
+          title={`Nyawa ${hearts}/${MAX_HEARTS}, ketuk untuk buka Toko`}
+          aria-label={`Nyawa ${hearts} dari ${MAX_HEARTS}, ketuk untuk buka Toko`}
+          data-coach="hearts"
+          className={cn(
+            pillBase,
+            hearts <= 1 && "animate-pulse border-danger text-ruby-shadow bg-danger/10",
+          )}
+        >
+          <span className="grid size-4 shrink-0 place-items-center">
+            <Heart
+              className={cn("size-3.5", hearts > 0 ? "text-ruby-shadow" : "text-choco-900/40")}
+              weight={hearts > 0 ? "fill" : "regular"}
+            />
+          </span>
+          <span className="font-sans font-black text-xs sm:text-sm text-choco-900 tabular-nums tracking-tight leading-none">
+            {hearts}
+          </span>
+          {hearts < MAX_HEARTS && (
+            <span className="text-candy-700 text-xs font-black leading-none">+</span>
+          )}
+        </Link>
+
+        {/* Kontrol efek suara dihapus dari header: sekarang satu-satunya di
+            /settings ("Efek Suara" Aktif/Mute). Sinkronisasi mesin audio tetap
+            ditangani __root.tsx, jadi hapus di sini tidak memutus apa pun. */}
+      </div>
     </header>
-  );
-}
-
-function Stat({
-  icon,
-  value,
-  label,
-  className,
-  mark,
-}: {
-  icon: ReactNode;
-  value: number | string;
-  label: string;
-  className?: string;
-  mark?: string;
-}) {
-  return (
-    <div
-      className={cn("hud-chip font-extrabold tabular-nums", className)}
-      title={label}
-      aria-label={`${label} ${value}`}
-      data-coach={mark}
-    >
-      {icon}
-      <span className="text-sm text-fg">{value}</span>
-    </div>
   );
 }

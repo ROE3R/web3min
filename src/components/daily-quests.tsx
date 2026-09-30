@@ -1,9 +1,11 @@
 import { playClaim } from "@/lib/audio";
 import { QUESTS, questProgress } from "@/lib/quests";
 import { useProgress } from "@/lib/store";
+import { rpcClaimQuest, syncProgressFromServer } from "@/lib/server-sync";
 import { cn } from "@/lib/utils";
 import { DuoButton } from "@/components/duo-button";
 import { BlockStamp, RouteChain } from "@/components/motif";
+import { ProgressBar } from "@/components/ui/progress-bar";
 
 export function DailyQuests({ compact = false, className }: { compact?: boolean; className?: string }) {
   const xpToday = useProgress((s) => s.xpToday);
@@ -39,13 +41,21 @@ export function DailyQuests({ compact = false, className }: { compact?: boolean;
                     />
                   </div>
                 ) : (
-                  <p className="mt-1 text-sm font-medium tabular-nums text-muted">
-                    {Math.min(prog.have, prog.need)}/{prog.need}
-                  </p>
+                  <div className="mt-1.5 space-y-1">
+                    <ProgressBar
+                      value={prog.have}
+                      max={prog.need}
+                      size="xs"
+                    />
+                    <div className="flex justify-between text-[10px] font-bold text-ink-500">
+                      <span>Progress</span>
+                      <span className="tabular-nums">{Math.min(prog.have, prog.need)}/{prog.need} XP</span>
+                    </div>
+                  </div>
                 )}
                 <p className="mt-1 flex items-center gap-1 text-sm font-medium text-muted">
                   <BlockStamp size={12} />
-                  +{q.gems} bintang
+                  +{q.gems} koin
                 </p>
               </div>
               {taken ? (
@@ -55,10 +65,15 @@ export function DailyQuests({ compact = false, className }: { compact?: boolean;
                   variant="primary"
                   size="sm"
                   onClick={() => {
-                    if (claimQuest(q.id)) playClaim();
+                    if (claimQuest(q.id)) {
+                      playClaim();
+                      void rpcClaimQuest(q.id).then((ok) => {
+                        if (ok) void syncProgressFromServer();
+                      });
+                    }
                   }}
                 >
-                  Klaim
+                  Klaim +{q.gems} Koin →
                 </DuoButton>
               ) : null}
             </li>

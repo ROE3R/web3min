@@ -1,72 +1,124 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
+import { BookOpen, ShieldCheck, Sparkles, ArrowRight } from "lucide-react";
 
 export const Route = createFileRoute("/about")({ component: AboutPage });
 
 function AboutPage() {
   return (
     <AppShell>
-      <main className="px-4 py-5">
-        <h1 className="text-[28px] font-extrabold leading-[34px]">Tentang web3min</h1>
-        <p className="mt-3 text-base leading-6">
-          Belajar tanpa deposit, trading, atau menghubungkan wallet.
-        </p>
-        <p className="mt-3 text-base leading-6 text-muted">
-          web3min adalah aplikasi edukasi Web3. Bukan produk trading, bukan saran investasi, bukan dompet. Kamu belajar
-          wallet, DeFi, NFT, DAO, keamanan, dan kerja onchain lewat pelajaran singkat sekitar 3 menit.
-        </p>
-        <p className="mt-3 text-sm leading-5 text-faint">Materi ini bersifat edukatif, bukan saran keuangan.</p>
+      <main className="mx-auto max-w-3xl px-4 py-6 sm:py-8 select-none">
+        {/* Header Hero Banner */}
+        <div className="relative overflow-hidden rounded-[32px] border-2 border-choco-900 bg-linear-to-b from-warn-fill via-coin-fill-mid to-coin-fill-end p-6 md:p-8 shadow-[0_8px_0_#3B2218]">
+          <div className="flex flex-col sm:flex-row items-center sm:items-start justify-between gap-5 text-center sm:text-left">
+            <div className="flex-1">
+              <span className="inline-flex items-center gap-1.5 rounded-full border-2 border-choco-900 bg-white px-3 py-1 font-pixel text-[10px] font-bold text-choco-900 shadow-[0_2px_0_#3B2218] mb-2">
+                MANIFESTO WEB3MIN
+              </span>
+              <h1 className="mt-1 text-2xl md:text-3xl font-display font-black text-choco-900 tracking-tight">
+                Tentang Web3min
+              </h1>
+              <p className="mt-2 text-xs md:text-sm font-semibold text-choco-800 max-w-lg leading-relaxed">
+                Belajar crypto, wallet, DeFi, dan on-chain tanpa deposit, tanpa trading, dan tanpa harus menghubungkan dompet riil.
+              </p>
+            </div>
+            <img
+              src="/mascot/proud.png"
+              alt="Blobi Bangga"
+              className="size-20 sm:size-24 object-contain pixelated shrink-0"
+            />
+          </div>
+        </div>
 
-        <Link to="/cara" className="mt-5 inline-flex min-h-11 font-bold text-primary">
-          Cara main
-        </Link>
+        {/* Bento Content Pods */}
+        <div className="mt-6 space-y-4">
+          {/* Pod 1: Bahasa Orang & Bebas Boncos */}
+          <div className="rounded-2xl border-2 border-choco-900 bg-white p-5 sm:p-6 shadow-[0_5px_0_#3B2218]">
+            <div className="flex items-center gap-3 mb-2.5">
+              <div className="size-10 rounded-2xl border-2 border-choco-900 bg-candy-100 flex items-center justify-center shadow-[0_2px_0_#3B2218] shrink-0">
+                <img src="/props/book.png" alt="Buku" className="size-6 object-contain pixelated" />
+              </div>
+              <div>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-pixel font-bold bg-coin-fill border border-choco-900 text-choco-800">
+                  Prinsip 1
+                </span>
+                <h2 className="text-base sm:text-lg font-pixel font-bold text-choco-900 mt-0.5">
+                  Web3 Pakai Bahasa Orang
+                </h2>
+              </div>
+            </div>
+            <p className="text-xs sm:text-sm font-semibold text-choco-700 leading-relaxed pl-0 sm:pl-13">
+              Web3min dibangun buat membedah teknologi terdesentralisasi pakai analogi dunia nyata yang membumi. Bukan produk jualan sinyal trading, bukan bujukan investasi. Tiap modul dirancang padat sekitar 3 menit: pahami logikanya dulu, baru uji pemahaman di kuis.
+            </p>
+          </div>
 
-        <h2 className="mt-8 text-xl font-bold leading-[26px]">Cara materi dibuat</h2>
-        <p className="mt-2 text-base leading-6 text-muted">
-          Setiap rute disusun berjenjang: konsep dulu, contoh nyata, lalu kuis. Klaim yang beredar di media sosial
-          dicek ke dokumentasi, explorer, atau laporan publik — bukan diulang sebagai fakta.
-        </p>
+          {/* Pod 2: Keamanan & Privasi Mutlak */}
+          <div className="rounded-2xl border-2 border-choco-900 bg-leaf-soft p-5 sm:p-6 shadow-[0_5px_0_#3B2218]">
+            <div className="flex items-center gap-3 mb-2.5">
+              <div className="size-10 rounded-2xl border-2 border-choco-900 bg-leaf-fill-deep flex items-center justify-center shadow-[0_2px_0_#3B2218] shrink-0">
+                <img src="/props/shield.png" alt="Perisai" className="size-6 object-contain pixelated" />
+              </div>
+              <div>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-pixel font-bold bg-leaf-fill-deep border border-choco-900 text-leaf-deep-ink">
+                  Prinsip 2
+                </span>
+                <h2 className="text-base sm:text-lg font-pixel font-bold text-choco-900 mt-0.5">
+                  Seed Phrase Itu Nyawa
+                </h2>
+              </div>
+            </div>
+            <p className="text-xs sm:text-sm font-semibold text-choco-800 leading-relaxed pl-0 sm:pl-13">
+              Web3min <strong>tidak akan pernah</strong> meminta seed phrase, private key, atau kata sandi dompet pribadimu. Belajar di sini 100% menggunakan simulasi sandbox interaktif. Jangan pernah membocorkan seed phrase ke situs atau orang mana pun.
+            </p>
+          </div>
 
-        <h2 className="mt-8 text-xl font-bold leading-[26px]">Sumber dan referensi</h2>
-        <ul className="mt-2 list-disc space-y-1 pl-5 text-base leading-6 text-muted">
-          <li>Dokumentasi publik (Ethereum.org, Bitcoin, Uniswap, Aave, dan sejenisnya)</li>
-          <li>Kasus yang sudah terjadi dan dilaporkan di explorer atau media</li>
-          <li>Tangkapan layar di Bedah bukti: postingan publik, dipakai untuk latihan membaca klaim</li>
-        </ul>
-        <p className="mt-2 text-sm leading-5 text-muted">Penyusun: tim web3min. Diperbarui September 2026.</p>
+          {/* Pod 3: Sumber Terbuka & Verifikasi Fakta */}
+          <div className="rounded-2xl border-2 border-choco-900 bg-white p-5 sm:p-6 shadow-[0_5px_0_#3B2218]">
+            <div className="flex items-center gap-3 mb-2.5">
+              <div className="size-10 rounded-2xl border-2 border-choco-900 bg-coin-fill-deep flex items-center justify-center shadow-[0_2px_0_#3B2218] shrink-0">
+                <img src="/props/star.png" alt="Bintang" className="size-6 object-contain pixelated" />
+              </div>
+              <div>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-pixel font-bold bg-coin-fill border border-choco-900 text-choco-800">
+                  Prinsip 3
+                </span>
+                <h2 className="text-base sm:text-lg font-pixel font-bold text-choco-900 mt-0.5">
+                  Bukan Klaim Medsos, Tapi Data Nyata
+                </h2>
+              </div>
+            </div>
+            <ul className="space-y-1.5 text-xs sm:text-sm font-semibold text-choco-700 leading-relaxed list-disc list-inside pl-0 sm:pl-13">
+              <li>Dokumentasi resmi komunitas (Ethereum.org, Bitcoin.org, Uniswap, Etherscan).</li>
+              <li>Kasus eksploitasi dan phising riil yang terdokumentasi di blockchain explorer.</li>
+              <li>Bedah bukti transaksi asli untuk melatih kewaspadaan membaca smart contract.</li>
+            </ul>
+          </div>
+        </div>
 
-        <h2 className="mt-8 text-xl font-bold leading-[26px]">Keamanan wallet</h2>
-        <p className="mt-2 text-base leading-6">
-          web3min tidak akan pernah meminta seed phrase, private key, atau password dompetmu. Kamu tidak perlu
-          menghubungkan wallet untuk belajar.
-        </p>
+        {/* Footer Navigation Buttons */}
+        <div className="mt-8 flex flex-wrap items-center justify-between gap-3 pt-4 border-t-2 border-choco-900/15">
+          <div className="flex items-center gap-3">
+            <Link
+              to="/privacy"
+              className="font-pixel text-xs font-bold text-choco-700 underline hover:text-candy-700 inline-flex items-center min-h-11"
+            >
+              Kebijakan Privasi
+            </Link>
+            <span className="text-choco-500">·</span>
+            <Link
+              to="/settings"
+              className="font-pixel text-xs font-bold text-choco-700 underline hover:text-candy-700 inline-flex items-center min-h-11"
+            >
+              Pengaturan
+            </Link>
+          </div>
 
-        <h2 className="mt-8 text-xl font-bold leading-[26px]">Data di perangkat</h2>
-        <p className="mt-2 text-base leading-6 text-muted">
-          Progress, username, dan pengaturan tersimpan di penyimpanan lokal perangkatmu. Tidak ada akun server pada
-          versi ini. Feed teman memakai data contoh, bukan komunitas live.
-        </p>
-
-        <h2 className="mt-8 text-xl font-bold leading-[26px]">Syarat pakai</h2>
-        <p className="mt-2 text-base leading-6 text-muted">
-          Pakai web3min untuk belajar. Jangan kirim seed atau kunci ke siapa pun, termasuk ke aplikasi ini. Reset
-          progres menghapus data lokal di perangkat ini saja.
-        </p>
-
-        <h2 className="mt-8 text-xl font-bold leading-[26px]">Laporkan materi</h2>
-        <p className="mt-2 text-base leading-6 text-muted">
-          Jika menemukan kesalahan, buka Pengaturan lalu pilih Laporkan materi. Versi ini belum komunitas live.
-        </p>
-
-        <div className="mt-6 flex flex-col gap-2">
-          <Link to="/privacy" className="min-h-11 font-bold text-primary">
-            Kebijakan privasi
-          </Link>
-          <Link to="/settings" className="min-h-11 font-bold text-primary">
-            Pengaturan
-          </Link>
-          <Link to="/" className="min-h-11 font-bold text-primary">
-            Kembali belajar
+          <Link
+            to="/"
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border-2 border-candy-600 bg-gradient-to-b from-blush-50 to-blush-200 hover:brightness-105 px-5 py-3 font-pixel text-xs sm:text-sm font-bold text-choco-900 shadow-[0_4px_0_#B01F62] active:translate-y-1 active:shadow-[0_1px_0_#B01F62] transition-all cursor-pointer"
+          >
+            <span>Kembali ke Peta Rantai</span>
+            <ArrowRight className="size-4" />
           </Link>
         </div>
       </main>

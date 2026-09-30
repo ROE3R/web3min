@@ -1,133 +1,611 @@
 import { useEffect, useState } from "react";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { DuoButton } from "@/components/duo-button";
-import { Mascot, SpeechBubble } from "@/components/mascot";
-import { resumePath } from "@/lib/continue-to";
-import { useProgress, type DailyGoal } from "@/lib/store";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { ArrowRight, Clock, ShieldCheck, Gift, Check, Sparkles, AlertTriangle } from "lucide-react";
+import { TactileButton } from "@/components/ui/tactile-button";
+import { Box } from "@/components/ui/box";
+import { SectionMessage } from "@/components/ui/section-message";
+import { Lozenge } from "@/components/ui/lozenge";
+import { Mascot, type MascotMood } from "@/components/mascot";
+import { type DailyGoal, useProgress } from "@/lib/store";
+import { playMoodSfx, triggerHaptic } from "@/lib/audio";
+import { isUsernameAvailable, loginAccount, registerAccount, validatePassword, validateUsername } from "@/lib/account";
+import { sanitizeUsername } from "@/lib/people";
+import { syncProgressFromServer } from "@/lib/server-sync";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/onboarding")({ component: Onboarding });
 
-const GOALS: { value: DailyGoal; label: string; hint: string }[] = [
-  { value: 10, label: "Santai", hint: "10 XP / hari" },
-  { value: 20, label: "Biasa aja", hint: "20 XP / hari" },
-  { value: 30, label: "Rajin", hint: "30 XP / hari" },
-  { value: 50, label: "Penuh", hint: "50 XP / hari" },
-];
-
-function goAfter(router: { history: { push: (path: string) => void } }) {
-  resumePath((path) => router.history.push(path));
+interface GoalConfig {
+  value: DailyGoal;
+  label: string;
+  desc: string;
+  modules: string;
+  mood: MascotMood;
+  quote: string;
 }
+
+const GOALS: GoalConfig[] = [
+  {
+    value: 10,
+    label: "Santai",
+    desc: "10 XP / hari",
+    modules: "~1 modul per hari",
+    mood: "idle",
+    quote: "Santai aja, 1 modul per hari udah keren banget!",
+  },
+  {
+    value: 20,
+    label: "Reguler",
+    desc: "20 XP / hari",
+    modules: "~2 modul per hari",
+    mood: "wave",
+    quote: "Pilihan pas! 2 modul sehari bikin cepat paham.",
+  },
+  {
+    value: 30,
+    label: "Serius",
+    desc: "30 XP / hari",
+    modules: "~3 modul per hari",
+    mood: "proud",
+    quote: "Mantap! 3 modul sehari, ambisius jadi master!",
+  },
+  {
+    value: 50,
+    label: "Intensif",
+    desc: "50 XP / hari",
+    modules: "~5 modul per hari",
+    mood: "angry",
+    quote: "Gaspol! 5 modul sehari, mode ngebut on-chain!",
+  },
+];
 
 function Onboarding() {
   const onboarded = useProgress((s) => s.onboarded);
-  const introSeen = useProgress((s) => s.introSeen);
   const completeOnboarding = useProgress((s) => s.completeOnboarding);
-  const router = useRouter();
+  const navigate = useNavigate();
   const [step, setStep] = useState(0);
+  const [authMode, setAuthMode] = useState<"register" | "login">("register");
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
+  const [isTypingPassword, setIsTypingPassword] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [goal, setGoal] = useState<DailyGoal>(20);
 
   useEffect(() => {
     if (!onboarded) return;
-    goAfter(router);
-  }, [onboarded, introSeen, router]);
+    void navigate({ to: "/" });
+  }, [onboarded, navigate]);
 
-  function finish() {
-    completeOnboarding(username, goal);
+  async function handleLogin() {
+    const id = sanitizeUsername(username);
+    const uErr = validateUsername(id);
+    if (uErr) {
+      setFormError(uErr);
+      return;
+    }
+    if (!password) {
+      setFormError("Masukkan password akunmu.");
+      return;
+    }
+    setBusy(true);
+    setFormError(null);
+    const res = await loginAccount({ username: id, password });
+    if (!res.ok) {
+      setBusy(false);
+      setFormError(res.message);
+      return;
+    }
+    await syncProgressFromServer();
+    setBusy(false);
+    void navigate({ to: "/" });
   }
 
+  async function goUsernameNext() {
+    const id = sanitizeUsername(username);
+    const uErr = validateUsername(id);
+    if (uErr) {
+      setFormError(uErr);
+      return;
+    }
+    const pErr = validatePassword(password);
+    if (pErr) {
+      setFormError(pErr);
+      return;
+    }
+    if (password !== password2) {
+      setFormError("Konfirmasi password tidak sama.");
+      return;
+    }
+    setBusy(true);
+    const free = await isUsernameAvailable(id);
+    setBusy(false);
+    if (!free) {
+      setFormError("Username sudah dipakai. Pilih yang lain.");
+      return;
+    }
+    setUsername(id);
+    setFormError(null);
+    setStep(2);
+  }
+
+  async function finish() {
+    const id = sanitizeUsername(username);
+    setBusy(true);
+    const res = await registerAccount({ username: id, password });
+    if (!res.ok) {
+      setBusy(false);
+      setFormError(res.message);
+      setStep(1);
+      return;
+    }
+    completeOnboarding(res.username, goal);
+    setBusy(false);
+    void navigate({ to: "/" });
+  }
+
+  const activeGoalConfig = GOALS.find((g) => g.value === goal) ?? GOALS[1];
+  const currentMood: MascotMood =
+    isTypingPassword
+      ? "sleep"
+      : step === 0
+        ? "wave"
+        : step === 1
+          ? authMode === "login"
+            ? "proud"
+            : "think"
+          : activeGoalConfig.mood;
+
+  const handleSelectGoal = (g: GoalConfig) => {
+    setGoal(g.value);
+    if (useProgress.getState().sound) {
+      playMoodSfx(g.mood);
+    } else {
+      triggerHaptic("selection");
+    }
+  };
+
   return (
-    <main className="hex-wash mx-auto flex min-h-dvh max-w-lg flex-col bg-bg px-5 py-8 lg:max-w-5xl lg:flex-row lg:items-center lg:gap-12">
-      <div className="flex justify-center lg:w-2/5">
-        <Mascot mood={step === 0 ? "wave" : step === 3 ? "celebrate" : "idle"} size={200} float />
-      </div>
+    <main className="min-h-dvh bg-cream-50 flex items-start sm:items-center justify-center px-3 py-6 sm:px-6 sm:py-10 relative select-none overflow-x-hidden overflow-y-auto">
+      <div className="w-full max-w-4xl relative z-10 bg-cream rounded-[32px] border-2 border-choco-900 shadow-[0_10px_0_#3B2218] p-6 sm:p-10">
+        {/* Step Progress Bar (Shown on Step 1 & 2) */}
+        {step > 0 && (
+          <div className="mb-6 flex items-center justify-between gap-3">
+            <div className="flex-1 flex items-center gap-2" aria-hidden="true">
+              {[1, 2].map((i) => (
+                <span
+                  key={i}
+                  className={`h-3 flex-1 rounded-full border-2 border-choco-900 ${
+                    i <= step ? "bg-candy-500 shadow-[0_2px_0_#3B2218]" : "bg-white"
+                  }`}
+                />
+              ))}
+            </div>
+            <span className="font-pixel text-[11px] font-bold text-choco-900 shrink-0 bg-coin-fill border-2 border-choco-900 px-3 py-0.5 rounded-full shadow-[0_1.5px_0_#3B2218]">
+              Langkah {step} dari 2
+            </span>
+          </div>
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 md:gap-8 items-center">
+          {/* Mascot Side (5 Cols - Blobi on Tactile 3D Arcade Tile) */}
+          <div className="md:col-span-5 flex md:flex-col items-center justify-center text-left md:text-center bg-linear-to-b from-blush-50 to-blush-100 border-2 border-choco-900 shadow-[0_6px_0_#3B2218] rounded-3xl p-6 gap-4 relative overflow-hidden">
+            {/* Decorative Arcade Top Badge */}
+            <div className="absolute top-2.5 left-1/2 -translate-x-1/2 hidden md:inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-gradient-to-b from-blush-50 to-blush-200 border-2 border-candy-600 text-choco-900 font-pixel text-[9px] font-bold shadow-[0_2px_0_#B01F62]">
+              <Sparkles className="size-2.5 text-choco-900" />
+              <span>BLOBI CO-PILOT</span>
+              <Sparkles className="size-2.5 text-choco-900" />
+            </div>
 
-      {step === 0 ? (
-        <div className="enter-up mt-2 flex flex-1 flex-col">
-          <SpeechBubble className="-mt-3">Aku web3min. Nanti aku tunjukin jalannya di peta.</SpeechBubble>
-          <h1 className="mt-6 text-[32px] font-extrabold leading-[38px] tracking-tight">
-            Belajar tanpa deposit, trading, atau menghubungkan wallet.
-          </h1>
-          <p className="mt-3 text-base leading-6 text-muted">
-            Jelajahi wallet, DeFi, NFT, dan keamanan onchain lewat rute singkat. Dirancang untuk pemula.
-          </p>
-          <p className="mt-3 text-sm font-medium text-muted">20 rute · sekitar 3 menit per pelajaran</p>
-          <p className="mt-2 text-sm leading-5 text-faint">Materi ini bersifat edukatif, bukan saran keuangan.</p>
-          <DuoButton wide className="mt-auto" onClick={() => setStep(1)}>
-            Lanjut
-          </DuoButton>
-        </div>
-      ) : null}
-
-      {step === 1 ? (
-        <div className="enter-up mt-2 flex flex-1 flex-col">
-          <h1 className="text-[28px] font-extrabold leading-[34px]">Username-nya apa?</h1>
-          <p className="mt-1 text-muted">Bukan nama KTP. Ini yang kelihatan di Teman.</p>
-          <label className="mt-5 text-sm font-medium text-muted" htmlFor="username">
-            Username
-          </label>
-          <input
-            id="username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16))}
-            placeholder="contoh: justin_eth"
-            className="field mt-2 min-h-12 text-lg"
-            maxLength={16}
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            aria-describedby="username-hint"
-          />
-          <p id="username-hint" className="mt-2 text-sm text-muted">
-            Huruf kecil, angka, underscore. Username X nanti di profil.
-          </p>
-          <DuoButton wide className="mt-auto" disabled={username.length < 3} onClick={() => setStep(2)}>
-            Lanjut ke target harian
-          </DuoButton>
-        </div>
-      ) : null}
-
-      {step === 2 ? (
-        <div className="enter-up mt-2 flex flex-1 flex-col">
-          <h1 className="text-[28px] font-extrabold leading-[34px]">Target XP harian</h1>
-          <p className="mt-1 text-muted">Bisa diganti nanti. Pilih yang nyaman.</p>
-          <ul className="mt-5 flex flex-col gap-3">
-            {GOALS.map((g) => (
-              <li key={g.value}>
-                <button
-                  type="button"
-                  onClick={() => setGoal(g.value)}
-                  className={cn(
-                    "flex min-h-12 w-full items-center justify-between rounded-2xl px-4 py-3",
-                    goal === g.value ? "bg-primary-soft ring-2 ring-primary" : "bg-paper",
+            <div className="shrink-0 flex items-center justify-center size-24 md:size-40 md:mt-3">
+              <Mascot
+                key={step === 2 ? `goal-${goal}` : `step-${step}-${authMode}`}
+                mood={currentMood}
+                fill
+                float
+                interactive
+                hideParticles={isTypingPassword}
+              />
+            </div>
+            <div className="w-full">
+              <div className="inline-block px-3.5 py-1 rounded-xl bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 font-pixel text-xs sm:text-sm font-bold border-2 border-candy-600 shadow-[0_2px_0_#B01F62]">
+                Blobi
+              </div>
+              <div className="mt-2.5 p-3 rounded-2xl bg-white border-2 border-choco-900 shadow-[0_3px_0_#3B2218]">
+                <p className="text-xs font-bold text-choco-800 leading-snug">
+                  {isTypingPassword ? (
+                    <span className="text-candy-700 font-bold">
+                      Tenang, Blobi tidak akan mengintip kata sandimu.
+                    </span>
+                  ) : (
+                    <>
+                      {step === 0 && "Teman belajarmu di dunia Web3!"}
+                      {step === 1 && (authMode === "register" ? "Ketik nama panggilan petualangmu di Web3min" : "Selamat datang kembali! Yuk masuk")}
+                      {step === 2 && activeGoalConfig.quote}
+                    </>
                   )}
-                >
-                  <span className="font-bold">{g.label}</span>
-                  <span className="text-sm text-muted">{g.hint}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          <DuoButton wide className="mt-auto" onClick={() => setStep(3)}>
-            Lanjut ke keamanan
-          </DuoButton>
-        </div>
-      ) : null}
+                </p>
+              </div>
+            </div>
+          </div>
 
-      {step === 3 ? (
-        <div className="mt-2 flex flex-1 flex-col text-center">
-          <h1 className="text-[32px] font-extrabold leading-[38px]">Oke, @{username.trim() || "pelajar"}.</h1>
-          <p className="mt-3 text-base leading-6 text-muted">
-            web3min tidak akan pernah meminta seed phrase, private key, atau password dompetmu.
-          </p>
-          <p className="mt-2 text-base leading-6 text-muted">Kamu tidak perlu menghubungkan wallet untuk belajar.</p>
-          <p className="mt-3 text-sm leading-5 text-faint">Materi ini bersifat edukatif, bukan saran keuangan.</p>
-          <DuoButton wide className="mt-auto" onClick={finish}>
-            Mulai belajar
-          </DuoButton>
+          {/* Step Content (7 Cols) */}
+          <div className="md:col-span-7 flex flex-col justify-between min-h-0">
+            {/* Step 0: Welcome */}
+            {step === 0 && (
+              <div className="space-y-6">
+                <div>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-lemon border-2 border-choco-900 text-choco-900 font-pixel text-[10px] font-bold shadow-[0_2px_0_#3B2218] mb-2.5">
+                    ARCADE WEB3 SIMULATION
+                  </span>
+                  <h1 className="font-display font-black text-2xl sm:text-3xl lg:text-4xl text-choco-900 tracking-tight leading-tight">
+                    Belajar Web3 dengan santai, 3 menit sehari.
+                  </h1>
+                  <p className="text-xs sm:text-sm font-semibold text-choco-700 mt-2 leading-relaxed">
+                    Pahami wallet, smart contract, DeFi, dan keamanan on-chain lewat simulasi interaktif tanpa perlu modal dan tanpa risiko finansial.
+                  </p>
+                </div>
+
+                {/* 3 Core Highlights (Tactile 3D Retro Arcade Candy Pods) */}
+                <div className="space-y-3.5">
+                  <div className="flex items-center gap-4 rounded-3xl border-2 border-choco-900 bg-white hover:bg-coin-fill/50 p-4 shadow-[0_4px_0_#3B2218] hover:translate-y-[-2px] hover:shadow-[0_6px_0_#3B2218] active:translate-y-0.5 active:shadow-[0_2px_0_#3B2218] transition-all">
+                    <div className="size-12 shrink-0 rounded-2xl border-2 border-choco-900 bg-coin-fill-deep p-2 shadow-[0_2px_0_#3B2218] flex items-center justify-center">
+                      <img src="/props/book.png" alt="Modul Belajar" className="size-7 object-contain pixelated" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-pixel text-xs sm:text-sm font-bold text-choco-900">20 Rute Pulau Rantai</span>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-pixel font-bold bg-coin-fill-deep text-choco-900 border-2 border-choco-900 shadow-[0_1.5px_0_#3B2218]">
+                          Santai
+                        </span>
+                      </div>
+                      <p className="text-xs font-semibold text-choco-700 mt-1 leading-snug">
+                        Mulai dari nol apa itu blockchain sampai simulasi smart contract. Bahasa manusia, bukan bahasa alien.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 rounded-3xl border-2 border-choco-900 bg-white hover:bg-leaf-soft/50 p-4 shadow-[0_4px_0_#3B2218] hover:translate-y-[-2px] hover:shadow-[0_6px_0_#3B2218] active:translate-y-0.5 active:shadow-[0_2px_0_#3B2218] transition-all">
+                    <div className="size-12 shrink-0 rounded-2xl border-2 border-choco-900 bg-leaf-fill-deep p-2 shadow-[0_2px_0_#3B2218] flex items-center justify-center">
+                      <img src="/props/shield.png" alt="Simulasi Aman" className="size-7 object-contain pixelated" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-pixel text-xs sm:text-sm font-bold text-choco-900">100% Simulasi Bebas Risiko</span>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-pixel font-bold bg-mint text-white border-2 border-choco-900 shadow-[0_1.5px_0_#3B2218]">
+                          Tanpa Modal
+                        </span>
+                      </div>
+                      <p className="text-xs font-semibold text-choco-700 mt-1 leading-snug">
+                        Latihan transaksi dan kenali jebakan phising di simulasi aman tanpa modal uang nyata.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 rounded-3xl border-2 border-choco-900 bg-white hover:bg-blush-50/50 p-4 shadow-[0_4px_0_#3B2218] hover:translate-y-[-2px] hover:shadow-[0_6px_0_#3B2218] active:translate-y-0.5 active:shadow-[0_2px_0_#3B2218] transition-all">
+                    <div className="size-12 shrink-0 rounded-2xl border-2 border-choco-900 bg-candy-200 p-2 shadow-[0_2px_0_#3B2218] flex items-center justify-center">
+                      <img src="/props/star.png" alt="Hadiah & Koin" className="size-7 object-contain pixelated" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-pixel text-xs sm:text-sm font-bold text-choco-900">Koin & Tiket Undian</span>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-pixel font-bold bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 border-2 border-candy-600 shadow-[0_1.5px_0_#B01F62]">
+                          Reward
+                        </span>
+                      </div>
+                      <p className="text-xs font-semibold text-choco-700 mt-1 leading-snug">
+                        Kumpulin XP, rawat streak harian, dan ikut undian hadiah dalam aplikasi setiap minggu.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setStep(1)}
+                    className="w-full py-3.5 px-6 rounded-full bg-gradient-to-b from-blush-50 to-blush-200 hover:brightness-105 text-choco-900 font-pixel font-bold text-sm sm:text-base border-2 border-candy-600 shadow-[0_4px_0_#B01F62] active:translate-y-1 active:shadow-[0_1px_0_#B01F62] cursor-pointer flex items-center justify-center gap-2.5 transition-all"
+                  >
+                    <span>Mulai Petualangan Web3</span>
+                    <ArrowRight className="size-5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 1: Username & Password (Register or Login in-place) */}
+            {step === 1 && (
+              <div className="space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                  <div>
+                    <h1 className="font-display font-black text-xl sm:text-2xl text-choco-900 tracking-tight">
+                      {authMode === "register" ? "Buat Akun Petualang" : "Masuk ke Akun"}
+                    </h1>
+                    <p className="text-xs sm:text-sm font-semibold text-choco-700 mt-1">
+                      {authMode === "register"
+                        ? "Username unik tersimpan di database. Tidak bisa dipakai orang lain."
+                        : "Gunakan username unik dan password akun Web3min milikmu."}
+                    </p>
+                  </div>
+
+                  {/* Quick Mode Toggle Pill */}
+                  <div className="inline-flex rounded-full bg-cream-100 border-2 border-choco-900 p-1 shadow-[0_2px_0_#3B2218] shrink-0 self-start sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMode("register");
+                        setFormError(null);
+                      }}
+                      className={cn(
+                        "px-3.5 py-1 rounded-full text-xs font-pixel font-bold transition-all cursor-pointer",
+                        authMode === "register"
+                          ? "bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 border border-candy-600 shadow-[0_1.5px_0_#B01F62]"
+                          : "text-choco-700 hover:text-choco-900"
+                      )}
+                    >
+                      Daftar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthMode("login");
+                        setFormError(null);
+                      }}
+                      className={cn(
+                        "px-3.5 py-1 rounded-full text-xs font-pixel font-bold transition-all cursor-pointer",
+                        authMode === "login"
+                          ? "bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 border border-candy-600 shadow-[0_1.5px_0_#B01F62]"
+                          : "text-choco-700 hover:text-choco-900"
+                      )}
+                    >
+                      Masuk
+                    </button>
+                  </div>
+                </div>
+
+                <form
+                  className="space-y-3 pt-1"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (authMode === "register") {
+                      void goUsernameNext();
+                    } else {
+                      void handleLogin();
+                    }
+                  }}
+                >
+                  <div>
+                    <label className="text-xs font-pixel font-bold text-choco-900 block mb-1" htmlFor="username">
+                      Username
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="username"
+                        value={username}
+                        onChange={(e) => {
+                          setUsername(sanitizeUsername(e.target.value));
+                          setFormError(null);
+                        }}
+                        placeholder="contoh: satoshi atau blobi_fan"
+                        className="w-full h-13 px-4 rounded-2xl bg-white border-2 border-choco-900 text-base sm:text-sm font-bold text-choco-900 placeholder:text-choco-400 shadow-[0_3px_0_#3B2218] focus:border-candy-500 focus:shadow-[0_4px_0_#3B2218] outline-none transition-all"
+                        autoFocus
+                        autoComplete="username"
+                      />
+                      <span className="absolute right-3.5 top-3.5 text-xs font-pixel font-bold text-choco-500">
+                        {username.length}/16
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-pixel font-bold text-choco-900 block mb-1" htmlFor="password">
+                      Password
+                    </label>
+                    <input
+                      id="password"
+                      type="password"
+                      value={password}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        setFormError(null);
+                      }}
+                      onFocus={() => setIsTypingPassword(true)}
+                      onBlur={() => setIsTypingPassword(false)}
+                      autoComplete={authMode === "register" ? "new-password" : "current-password"}
+                      className="w-full h-13 px-4 rounded-2xl bg-white border-2 border-choco-900 text-base sm:text-sm font-bold text-choco-900 placeholder:text-choco-400 shadow-[0_3px_0_#3B2218] focus:border-candy-500 focus:shadow-[0_4px_0_#3B2218] outline-none transition-all"
+                      placeholder="Minimal 6 karakter"
+                    />
+                  </div>
+
+                  {authMode === "register" && (
+                    <div>
+                      <label className="text-xs font-pixel font-bold text-choco-900 block mb-1" htmlFor="password2">
+                        Ulangi Password
+                      </label>
+                      <input
+                        id="password2"
+                        type="password"
+                        value={password2}
+                        onChange={(e) => {
+                          setPassword2(e.target.value);
+                          setFormError(null);
+                        }}
+                        onFocus={() => setIsTypingPassword(true)}
+                        onBlur={() => setIsTypingPassword(false)}
+                        autoComplete="new-password"
+                        className="w-full h-13 px-4 rounded-2xl bg-white border-2 border-choco-900 text-base sm:text-sm font-bold text-choco-900 placeholder:text-choco-400 shadow-[0_3px_0_#3B2218] focus:border-candy-500 focus:shadow-[0_4px_0_#3B2218] outline-none transition-all"
+                        placeholder="Ulangi password yang sama"
+                      />
+                    </div>
+                  )}
+
+                  {formError ? (
+                    <div className="p-3 rounded-2xl bg-err-soft border-2 border-err-ink text-candy-900 text-xs font-bold shadow-[0_2px_0_#E11D48] flex items-center gap-1.5">
+                      <AlertTriangle className="size-4 text-err-ink shrink-0" />
+                      <span>{formError}</span>
+                    </div>
+                  ) : null}
+
+                  {authMode === "register" && (
+                    <p className="pt-1 text-[11px] font-medium text-choco-600 leading-normal">
+                      Dengan mendaftar, kamu menyetujui{" "}
+                      <Link to="/privacy" className="text-candy-700 font-bold hover:underline">
+                        Kebijakan Privasi
+                      </Link>{" "}
+                      Web3min (Nol pelacakan & data terenkripsi).
+                    </p>
+                  )}
+
+                  <div className="pt-1 text-xs font-bold text-choco-600">
+                    {authMode === "register" ? (
+                      <>
+                        Sudah punya akun?{" "}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthMode("login");
+                            setFormError(null);
+                          }}
+                          className="text-candy-700 font-pixel font-bold hover:underline cursor-pointer ml-1"
+                        >
+                          Masuk di sini
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        Belum punya akun?{" "}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthMode("register");
+                            setFormError(null);
+                          }}
+                          className="text-candy-700 font-pixel font-bold hover:underline cursor-pointer ml-1"
+                        >
+                          Daftar akun baru
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col-reverse sm:flex-row gap-3 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (authMode === "login") {
+                          setAuthMode("register");
+                          setFormError(null);
+                        } else {
+                          setStep(0);
+                        }
+                      }}
+                      className="py-3 px-5 rounded-full bg-white hover:bg-cream text-choco-900 font-pixel font-bold text-xs border-2 border-choco-900 shadow-[0_2.5px_0_#3B2218] active:translate-y-0.5 cursor-pointer"
+                    >
+                      Kembali
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      className="flex-1 py-3 px-5 rounded-full bg-gradient-to-b from-blush-50 to-blush-200 hover:brightness-105 disabled:opacity-50 text-choco-900 font-pixel font-bold text-xs sm:text-sm border-2 border-candy-600 shadow-[0_4px_0_#B01F62] active:translate-y-1 active:shadow-[0_1px_0_#B01F62] cursor-pointer flex items-center justify-center gap-2 transition-all"
+                    >
+                      <span>
+                        {busy
+                          ? authMode === "register"
+                            ? "Memeriksa..."
+                            : "Memproses..."
+                          : authMode === "register"
+                            ? "Lanjut ke Target Harian"
+                            : "Masuk Sekarang"}
+                      </span>
+                      <ArrowRight className="size-4" />
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Step 2: Daily Goal */}
+            {step === 2 && (
+              <div className="space-y-5">
+                <div>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-lemon border-2 border-choco-900 text-choco-900 font-pixel text-[9px] font-bold shadow-[0_1.5px_0_#3B2218] mb-1.5">
+                    KOMITMEN BELAJAR
+                  </span>
+                  <h1 className="font-display font-black text-2xl sm:text-3xl text-choco-900 tracking-tight">
+                    Tentukan Target Harianmu
+                  </h1>
+                  <p className="text-xs sm:text-sm font-semibold text-choco-700 mt-1">
+                    Belajar konsisten beberapa menit tiap hari untuk membangun streak dan menjaga nyawa.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3.5 pt-1">
+                  {GOALS.map((g) => {
+                    const isSelected = goal === g.value;
+                    return (
+                      <button
+                        key={g.value}
+                        type="button"
+                        onClick={() => handleSelectGoal(g)}
+                        className={`p-4 rounded-3xl text-left border-2 transition-all cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? "bg-candy-100 border-candy-600 shadow-[0_4px_0_#B01F62] scale-[1.02]"
+                            : "bg-white border-choco-900 shadow-[0_3px_0_#3B2218] hover:translate-y-[-2px] hover:shadow-[0_5px_0_#3B2218]"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="size-8 rounded-full bg-white border-2 border-choco-900 flex items-center justify-center shrink-0 shadow-[0_1.5px_0_#3B2218]">
+                              <img
+                                src={`/mascot/${g.mood}.png`}
+                                alt=""
+                                className="size-5 pixelated object-contain"
+                              />
+                            </span>
+                            <span className="font-pixel text-xs font-bold text-choco-900">{g.label}</span>
+                          </div>
+                          {isSelected ? (
+                            <span className="size-5 rounded-full bg-gradient-to-b from-blush-50 to-blush-200 text-choco-900 flex items-center justify-center shadow-xs border border-candy-600">
+                              <Check className="size-3" strokeWidth={3} />
+                            </span>
+                          ) : (
+                            <span className="font-pixel text-[9px] font-bold px-2 py-0.5 rounded-full bg-cream border border-choco-900 text-choco-700">
+                              {g.value} XP
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-3">
+                          <div className="font-pixel text-xs font-bold text-candy-700">{g.desc}</div>
+                          <div className="text-[11px] font-bold text-choco-600 mt-0.5">{g.modules}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-col-reverse sm:flex-row gap-3 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setStep(1)}
+                    className="py-3 px-5 rounded-full bg-white hover:bg-cream text-choco-900 font-pixel font-bold text-xs border-2 border-choco-900 shadow-[0_2.5px_0_#3B2218] active:translate-y-0.5 cursor-pointer"
+                  >
+                    Kembali
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void finish()}
+                    disabled={busy}
+                    className="flex-1 py-3 px-5 rounded-full bg-gradient-to-b from-blush-50 to-blush-200 hover:brightness-105 disabled:opacity-50 text-choco-900 font-pixel font-bold text-xs sm:text-sm border-2 border-candy-600 shadow-[0_4px_0_#B01F62] active:translate-y-1 active:shadow-[0_1px_0_#B01F62] cursor-pointer flex items-center justify-center gap-2 transition-all"
+                  >
+                    <span>{busy ? "Mendaftarkan…" : "Mulai Petualangan!"}</span>
+                    <ArrowRight className="size-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      ) : null}
+      </div>
     </main>
   );
 }

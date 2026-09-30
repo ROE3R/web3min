@@ -1,5 +1,7 @@
 import { Check, X } from "@/lib/kicon";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Lightbulb, BookOpen, ArrowRight, ChevronDown, Sparkles } from "lucide-react";
+import { Mascot } from "@/components/mascot";
 import type { Exercise, TipExercise } from "@/lib/curriculum";
 import { cn, shuffle } from "@/lib/utils";
 import { playTap } from "@/lib/audio";
@@ -79,44 +81,108 @@ export function ExerciseView({ exercise, disabled, reveal, onHandle, onAutoPass,
 }
 
 function TipCard({ exercise, onHandle }: { exercise: TipExercise; onHandle: (h: CheckHandle) => void }) {
+  const [openExample, setOpenExample] = useState(false);
+  const [openRemember, setOpenRemember] = useState(false);
+
   useEffect(() => {
     onHandle({ ready: true, isCorrect: () => true });
   }, [onHandle]);
 
   return (
-    <article className="max-w-prose">
-      <p className="text-sm font-medium tracking-wide text-streak">Baca dulu</p>
-      <h3 className="mt-1 text-xl font-bold leading-[26px]">{exercise.title}</h3>
-      <p className="mt-3 text-base font-medium leading-6 text-fg">{exercise.body}</p>
-      {exercise.proofs && exercise.proofs.length > 0 ? <ProofGallery ids={exercise.proofs} className="mt-4" /> : null}
+    <article className="max-w-prose mx-auto rounded-[24px] bg-white border-2 border-choco-900 shadow-[0_6px_0_#3B2218] p-5 sm:p-7 mb-8">
+      {/* Header Badge & Mascot Note */}
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-ok-soft border-2 border-ok-ink text-xs font-bold text-ok-ink shadow-[0_2px_0_#0E7A46]">
+          <BookOpen className="size-3.5" />
+          <span>KONSEP KUNCI</span>
+        </span>
+        <div className="flex items-center gap-1.5 text-xs font-bold text-choco-600">
+          <span className="size-6 shrink-0"><Mascot fill mood="think" size={24} /></span>
+          <span>Catatan Blobi</span>
+        </div>
+      </div>
+
+      <h3 className="font-display text-xl sm:text-2xl font-bold leading-tight text-choco-900 mb-2">
+        {exercise.title}
+      </h3>
+
+      {/* Scannable Body */}
+      <p className="text-[15px] font-normal leading-[24px] text-choco-700">
+        {exercise.body.replaceAll(" " + String.fromCharCode(8212) + " ", ", ").replaceAll(String.fromCharCode(8212), ", ")}
+      </p>
+
+      {/* Scannable Key Points (if present) */}
       {exercise.points && exercise.points.length > 0 ? (
-        <ul className="mt-4 flex flex-col gap-2.5">
+        <ul className="mt-3.5 flex flex-col gap-2 bg-[#FFFDF8] border-2 border-choco-900/10 rounded-2xl p-3.5">
           {exercise.points.map((point) => (
-            <li key={point} className="flex gap-3 text-base font-medium leading-6 text-fg">
-              <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary" />
+            <li key={point} className="flex items-start gap-2.5 text-[13.5px] font-medium leading-[20px] text-choco-800">
+              <span className="mt-1.5 size-2 shrink-0 rounded-full bg-candy-500 shadow-[0_1px_0_#B01F62]" />
               <span>{point}</span>
             </li>
           ))}
         </ul>
       ) : null}
+
+      {/* Accordion 1: Contoh Kasus Nyata (Less is More) */}
       {exercise.example ? (
-        <div className="mt-4 border-t border-line pt-3">
-          <p className="text-sm font-medium tracking-wide text-sky">Contoh</p>
-          <p className="mt-1 text-base font-medium leading-6 text-fg">{exercise.example}</p>
+        <div className="mt-3.5 rounded-2xl border-2 border-choco-900/15 bg-cream/50 overflow-hidden transition-all">
+          <button
+            type="button"
+            aria-expanded={openExample}
+            onClick={() => setOpenExample((prev) => !prev)}
+            className="w-full flex items-center justify-between p-3.5 text-left font-pixel text-xs sm:text-sm font-bold text-choco-900 hover:bg-cream active:bg-cream/80 transition-colors cursor-pointer select-none"
+          >
+            <span className="flex items-center gap-2">
+              <Sparkles className="size-4 text-candy-600 shrink-0" />
+              <span>Contoh Nyata di Lapangan</span>
+            </span>
+            <ChevronDown
+              className={cn("size-4 text-choco-600 transition-transform duration-200", openExample && "rotate-180")}
+            />
+          </button>
+          {openExample && (
+            <div className="px-3.5 pb-3.5 pt-1 text-[13.5px] font-medium leading-[22px] text-choco-700 border-t border-choco-900/10 bg-white">
+              {exercise.example}
+            </div>
+          )}
         </div>
       ) : null}
+
+      {/* Accordion 2: Kunci Ingatan & Jebakan (Less is More) */}
       {exercise.remember ? (
-        <div className="mt-3 border-t border-line pt-3">
-          <p className="text-sm font-medium tracking-wide text-primary-deep">Ingat</p>
-          <p className="mt-1 text-base font-medium leading-6 text-fg">{exercise.remember}</p>
+        <div className="mt-3 rounded-2xl border-2 border-lemon-deep/40 bg-coin-fill/60 overflow-hidden transition-all">
+          <button
+            type="button"
+            aria-expanded={openRemember}
+            onClick={() => setOpenRemember((prev) => !prev)}
+            className="w-full flex items-center justify-between p-3.5 text-left font-pixel text-xs sm:text-sm font-bold text-coin-ink-deep hover:bg-coin-fill-deep/50 transition-colors cursor-pointer select-none"
+          >
+            <span className="flex items-center gap-2">
+              <Lightbulb className="size-4 text-lemon-deep shrink-0" />
+              <span>Kunci Ingatan & Jebakan</span>
+            </span>
+            <ChevronDown
+              className={cn("size-4 text-warn-ink transition-transform duration-200", openRemember && "rotate-180")}
+            />
+          </button>
+          {openRemember && (
+            <div className="px-3.5 pb-3.5 pt-1 text-[13.5px] font-bold leading-[22px] text-coin-ink-deep border-t border-lemon-deep/30 bg-coin-fill/90">
+              {exercise.remember}
+            </div>
+          )}
         </div>
       ) : null}
+
+      {/* Galeri Bukti On-Chain (if present) */}
       {exercise.proofs && exercise.proofs.length > 0 ? (
-        <p className="mt-4 text-sm leading-5 text-muted">
-          Sumber: dokumentasi publik dan kasus yang sudah terjadi. Diperbarui September 2026. Materi edukasi, bukan
-          rekomendasi investasi.
-        </p>
+        <div className="mt-4">
+          <ProofGallery ids={exercise.proofs} />
+        </div>
       ) : null}
+
+      <p className="mt-4 pt-3 border-t border-choco-900/10 text-[11px] leading-4 text-choco-500">
+        Sumber: dokumentasi publik dan kasus on-chain terverifikasi. Diperbarui September 2026. Materi edukasi, bukan rekomendasi investasi.
+      </p>
     </article>
   );
 }
@@ -142,6 +208,17 @@ function ChoiceList({
 }) {
   const [selected, setSelected] = useState<number | null>(null);
 
+  // Shuffle options per prompt render, and remap the correct answer index
+  const { shuffledOptions, mappedAnswer } = useMemo(() => {
+    const indexed = options.map((opt, origIdx) => ({ opt, origIdx }));
+    const shuffled = shuffle(indexed);
+    const newAnswerIdx = shuffled.findIndex((item) => item.origIdx === answer);
+    return {
+      shuffledOptions: shuffled.map((item) => item.opt),
+      mappedAnswer: newAnswerIdx >= 0 ? newAnswerIdx : answer,
+    };
+  }, [prompt, options, answer]);
+
   useEffect(() => {
     setSelected(null);
   }, [prompt]);
@@ -149,12 +226,12 @@ function ChoiceList({
   useEffect(() => {
     onHandle({
       ready: selected !== null,
-      isCorrect: () => selected === answer,
+      isCorrect: () => selected === mappedAnswer,
     });
-  }, [selected, answer, onHandle]);
+  }, [selected, mappedAnswer, onHandle]);
 
   const shown = blank
-    ? prompt.replace("___", selected === null ? "____" : options[selected] ?? "____")
+    ? prompt.replace("___", selected === null ? "____" : shuffledOptions[selected] ?? "____")
     : prompt;
 
   return (
@@ -162,10 +239,10 @@ function ChoiceList({
       <p className="text-xl font-black leading-snug lg:text-2xl">{shown}</p>
       <QuizClip ids={proofs} />
       <ul className="stagger-in mt-5 flex flex-col gap-3 lg:grid lg:grid-cols-2 lg:gap-3">
-        {options.map((opt, i) => {
+        {shuffledOptions.map((opt, i) => {
           const on = selected === i;
-          const markOk = Boolean(reveal && i === answer);
-          const markBad = Boolean(reveal && on && selected !== answer);
+          const markOk = Boolean(reveal && i === mappedAnswer);
+          const markBad = Boolean(reveal && on && selected !== mappedAnswer);
           return (
             <li key={opt}>
               <button
@@ -285,17 +362,24 @@ function MatchBoard({
   const [picked, setPicked] = useState<number | null>(null);
   const [matched, setMatched] = useState<number[]>([]);
   const [shake, setShake] = useState(false);
+  const onAutoPassRef = useRef(onAutoPass);
+  onAutoPassRef.current = onAutoPass;
+  const passedRef = useRef(false);
 
   useEffect(() => {
     setPicked(null);
     setMatched([]);
+    passedRef.current = false;
   }, [pairs]);
 
   useEffect(() => {
-    const done = matched.length === pairs.length;
+    const done = matched.length === pairs.length && pairs.length > 0;
     onHandle({ ready: done, isCorrect: () => done });
-    if (done) onAutoPass?.();
-  }, [matched, pairs.length, onHandle, onAutoPass]);
+    if (done && !passedRef.current) {
+      passedRef.current = true;
+      onAutoPassRef.current?.();
+    }
+  }, [matched.length, pairs.length, onHandle]);
 
   function tapLeft(i: number) {
     if (disabled || matched.includes(i)) return;
@@ -321,7 +405,7 @@ function MatchBoard({
     <div>
       <p className="text-xl font-black leading-snug">{prompt}</p>
       <QuizClip ids={proofs} />
-      <div className={cn("mt-5 grid grid-cols-2 gap-3", shake && "shake-wrong")}>
+      <div className={cn("mt-5 grid grid-cols-2 gap-3", shake && "wrong-shake")}>
         <ul className="flex flex-col gap-2">
           {left.map((item) => (
             <li key={`l-${item.i}`}>
@@ -379,43 +463,56 @@ function OrderBoard({
   onHandle: (h: CheckHandle) => void;
   proofs?: string[];
 }) {
-  const bank0 = useMemo(() => shuffle(pieces.map((text, i) => ({ i, text }))), [pieces]);
+  const bank0 = useMemo(() => {
+    const items = pieces.map((text, i) => ({ i, text }));
+    if (items.length <= 1) return items;
+    let shuffled = shuffle(items);
+    let tries = 0;
+    while (tries < 10 && shuffled.every((item, idx) => item.i === idx)) {
+      shuffled = shuffle(items);
+      tries++;
+    }
+    return shuffled;
+  }, [pieces]);
   const [built, setBuilt] = useState<number[]>([]);
 
   useEffect(() => {
     setBuilt([]);
   }, [pieces]);
 
+  const isExact =
+    built.length === answer.length &&
+    built.every((pieceIdx, idx) => pieces[pieceIdx] === answer[idx]);
+
   useEffect(() => {
     onHandle({
       ready: built.length === pieces.length,
-      isCorrect: () => built.map((i) => pieces[i]).join(" ") === answer.join(" "),
+      isCorrect: () => isExact,
     });
-  }, [built, pieces, answer, onHandle]);
+  }, [built.length, pieces.length, isExact, onHandle]);
 
   const used = new Set(built);
-  const correct = built.map((i) => pieces[i]).join(" ") === answer.join(" ");
 
   return (
     <div>
       <p className="text-xl font-black leading-snug">{prompt}</p>
       <QuizClip ids={proofs} />
-      <div className="mt-4 min-h-16 border-t border-dashed border-line pt-3">
+      <div className="mt-4 min-h-16 border-t-2 border-dashed border-line-strong pt-3">
         <div className="flex flex-wrap gap-2">
           {built.length === 0 ? (
-            <span className="text-sm font-bold text-faint">Susun di sini</span>
+            <span className="text-sm font-bold text-choco-500">Susun di sini</span>
           ) : (
             built.map((i, pos) => (
               <button
-                key={`b-${i}`}
+                key={`b-${i}-${pos}`}
                 type="button"
                 disabled={disabled}
                 onClick={() => setBuilt((b) => b.filter((_, x) => x !== pos))}
                 className={cn(
                   "quiz-opt rounded-xl border-2 border-b-4 px-3 py-1.5 text-sm font-extrabold",
                   !reveal && "quiz-opt-on",
-                  reveal && correct && "quiz-opt-ok",
-                  reveal && !correct && "quiz-opt-bad",
+                  reveal && isExact && "quiz-opt-ok",
+                  reveal && !isExact && "quiz-opt-bad",
                 )}
               >
                 {pieces[i]}
@@ -439,7 +536,7 @@ function OrderBoard({
                 if (useProgress.getState().sound) playTap();
                 setBuilt((b) => [...b, item.i]);
               }}
-              className="quiz-opt rounded-xl border-2 border-b-4 px-3 py-1.5 text-sm font-extrabold"
+              className="quiz-opt rounded-xl border-2 border-b-4 px-3 py-1 min-h-11 text-sm font-extrabold"
             >
               {item.text}
             </button>

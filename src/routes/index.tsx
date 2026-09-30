@@ -1,15 +1,33 @@
-import { useEffect } from "react";
-import { createFileRoute, useRouterState } from "@tanstack/react-router";
+import { useEffect, useMemo } from "react";
+import { createFileRoute, useRouterState, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
 import { CoachTour } from "@/components/coach";
 import { DeskRail } from "@/components/desk-rail";
-import { HomeDock } from "@/components/home-dock";
 import { PathMap } from "@/components/path-map";
-import { UNITS } from "@/lib/curriculum";
+import { BlobiFloatingCompanion } from "@/components/blobi-guide";
+import { UNITS, firstPlayableId, getLesson } from "@/lib/curriculum";
+import { useProgress } from "@/lib/store";
+import { buildMeta } from "@/lib/seo";
 
-export const Route = createFileRoute("/")({ component: Home });
+export const Route = createFileRoute("/")({
+  head: () =>
+    buildMeta({
+      // Judul TIDAK ditulis ulang di sini — dulu disalin persis dari seo.ts,
+      // jadi mengubah satu tempat membuat yang lain diam-diam basi.
+      path: "/",
+    }),
+  component: Home,
+});
 
 function Home() {
+  const navigate = useNavigate();
+  const completed = useProgress((s) => s.completed);
+  const activeLessonId = useMemo(() => firstPlayableId(completed), [completed]);
+  const activeLesson = useMemo(
+    () => (activeLessonId ? getLesson(activeLessonId) : null),
+    [activeLessonId],
+  );
+
   const hash = useRouterState({ select: (s) => s.location.hash });
   const raw = hash.replace(/^#/, "");
   const focus = raw || null;
@@ -26,11 +44,29 @@ function Home() {
     return () => window.clearTimeout(t);
   }, [focus, unitId]);
 
+  const handleStartActiveLesson = () => {
+    if (activeLessonId) {
+      navigate({ to: `/lesson/${activeLessonId}` });
+    }
+  };
+
+  const handleScrollToActive = () => {
+    if (!activeLessonId) return;
+    const el = document.getElementById(activeLessonId);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
   return (
     <AppShell rail={<DeskRail />}>
-      <main>
-        <HomeDock />
+      <main className="w-full relative">
         <PathMap units={UNITS} focusUnit={unitId} />
+        <BlobiFloatingCompanion
+          activeLesson={activeLesson}
+          onStartActiveLesson={handleStartActiveLesson}
+          onScrollToActive={handleScrollToActive}
+        />
       </main>
       <CoachTour />
     </AppShell>

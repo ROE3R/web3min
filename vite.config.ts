@@ -5,6 +5,7 @@ import { defineConfig } from "vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { tamaguiPlugin } from "@tamagui/vite-plugin";
 import { nitro } from "nitro/vite";
 // @ts-expect-error JS plugin alongside the TS vite config
 import { grokPwaPlugin } from "./scripts/grok-pwa-plugin.mjs";
@@ -165,6 +166,14 @@ export default defineConfig(({ command, isPreview }) => ({
     appEnvPlugin(),
     // PWA head + ?install=1 tutorial page; runs before Start/Nitro.
     grokPwaPlugin(),
+    // Tamagui: react-native-web alias + web extensions. Config dibaca dari
+    // `src/tamagui.config.ts` lewat `config` inline (bukan tamagui.build.ts,
+    // supaya tidak menambah satu berkas konfigurasi lagi di root).
+    tamaguiPlugin({
+      config: "src/tamagui.config.ts",
+      components: ["tamagui"],
+      disableExtraction: true,
+    }),
     tailwindcss(),
     tanstackStart(),
     ...(command === "build" || isPreview
@@ -175,6 +184,79 @@ export default defineConfig(({ command, isPreview }) => ({
             // manifest + head-tag middleware). Nitro v3 defaults serverDir to
             // false, so removing this silently unwires /?install=1 on deploys.
             serverDir: "./server",
+            // /api/blobi/chat memanggil model penalaran (deepseek) yang bisa
+            // butuh belasan detik; default function Vercel terlalu pendek.
+            vercel: {
+              functionRules: {
+                "/api/blobi/chat": { maxDuration: 60 },
+              },
+            },
+            routeRules: {
+              "/api/health": {
+                headers: {
+                  "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+                },
+              },
+              "/**": {
+                headers: {
+                  "x-content-type-options": "nosniff",
+                  "x-frame-options": "SAMEORIGIN",
+                  "referrer-policy": "strict-origin-when-cross-origin",
+                  "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+                  "permissions-policy": "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+                  "x-permitted-cross-domain-policies": "none",
+                },
+              },
+              "/assets/**": {
+                headers: { "cache-control": "public, max-age=31536000, immutable" },
+              },
+              "/worlds/**": {
+                headers: {
+                  "cache-control": "public, max-age=2592000, stale-while-revalidate=86400",
+                },
+              },
+              "/mascot/**": {
+                headers: {
+                  "cache-control": "public, max-age=2592000, stale-while-revalidate=86400",
+                },
+              },
+              "/props/**": {
+                headers: {
+                  "cache-control": "public, max-age=2592000, stale-while-revalidate=86400",
+                },
+              },
+              "/proof/**": {
+                headers: {
+                  "cache-control": "public, max-age=2592000, stale-while-revalidate=86400",
+                },
+              },
+              "/icons/**": {
+                headers: {
+                  "cache-control": "public, max-age=2592000, stale-while-revalidate=86400",
+                },
+              },
+              "/favicon.svg": {
+                headers: {
+                  "cache-control": "public, max-age=2592000, stale-while-revalidate=86400",
+                },
+              },
+              "/og.jpg": {
+                headers: {
+                  "cache-control": "public, max-age=2592000, stale-while-revalidate=86400",
+                },
+              },
+              "/x-banner.jpg": {
+                headers: {
+                  "cache-control": "public, max-age=2592000, stale-while-revalidate=86400",
+                },
+              },
+              "/manifest.json": {
+                headers: { "cache-control": "public, max-age=0, must-revalidate" },
+              },
+              "/__grok/manifest.webmanifest": {
+                headers: { "cache-control": "public, max-age=0, must-revalidate" },
+              },
+            },
           }),
         ]
       : []),

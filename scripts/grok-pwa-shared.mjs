@@ -16,12 +16,14 @@ const SHARE_META_KEYS = new Set([
   "og:image",
   "og:image:width",
   "og:image:height",
+  "og:image:alt",
   "og:type",
   "og:url",
   "og:site_name",
   "twitter:card",
   "twitter:title",
   "twitter:image",
+  "twitter:image:alt",
   "twitter:description",
   "x:game:image",
   "x:game:image:width",
@@ -161,17 +163,18 @@ export function renderWebManifest(hostHeader) {
   const name = appNameFromHost(hostHeader);
   return JSON.stringify(
     {
-      name,
-      short_name: name,
+      name: name || DEFAULT_APP_NAME,
+      short_name: "web3min",
+      description: "Platform edukasi dan simulasi Web3 interaktif.",
       id: "/",
       start_url: "/",
       scope: "/",
       display: "standalone",
-      background_color: "#000000",
-      theme_color: "#000000",
+      background_color: "#FFF6EE",
+      theme_color: "#E8437F",
       icons: [
         {
-          src: "/__grok/icon-180.png",
+          src: "/icon-180.png",
           sizes: "180x180",
           type: "image/png",
         },
@@ -186,17 +189,17 @@ export function grokPwaHeadTags(appName = DEFAULT_APP_NAME) {
   return [
     // Standalone display comes from the manifest ("display": "standalone");
     // the legacy *-web-app-capable metas it replaces are deliberately absent.
-    ["manifest", '<link rel="manifest" href="/__grok/manifest.webmanifest">'],
-    ["apple-touch-icon", '<link rel="apple-touch-icon" href="/__grok/icon-180.png">'],
+    ["manifest", '<link rel="manifest" href="/manifest.json">'],
+    ["apple-touch-icon", '<link rel="apple-touch-icon" href="/icon-180.png">'],
     [
       "apple-mobile-web-app-title",
       `<meta name="apple-mobile-web-app-title" content="${escapeHtml(appName)}">`,
     ],
     [
       "apple-mobile-web-app-status-bar-style",
-      '<meta name="apple-mobile-web-app-status-bar-style" content="black">',
+      '<meta name="apple-mobile-web-app-status-bar-style" content="default">',
     ],
-    ["theme-color", '<meta name="theme-color" content="#000000">'],
+    ["theme-color", '<meta name="theme-color" content="#E8437F">'],
   ];
 }
 
@@ -229,17 +232,7 @@ export function grokXCreatorHeadTags(creator = readXCreator(), creatorId = readX
 
 /** Platform "Created with Grok" banner — injected into every HTML document. */
 export function grokExtensionsHeadTags(projectId = readGrokProjectId()) {
-  const id = escapeHtml(projectId);
-  const tags = [];
-  if (projectId) {
-    tags.push(`<meta name="grok-project-id" content="${id}">`);
-  }
-  tags.push(
-    `<script src="${GROK_EXTENSIONS_SCRIPT_SRC}"${
-      projectId ? ` data-project-id="${id}"` : ""
-    } defer></script>`,
-  );
-  return tags;
+  return [];
 }
 
 export function readOgSite(cwd = process.cwd()) {
@@ -297,16 +290,69 @@ export function titleFromDocument(html) {
   return match ? unescapeHtml(match[1]).trim() : "";
 }
 
+/** The page's own meta description, so per-route descriptions survive the platform bake. */
+export function descriptionFromDocument(html) {
+  const match = String(html ?? "").match(
+    /<meta\b[^>]*\bname=["']description["'][^>]*\bcontent=["']([^"']*)["']/i,
+  );
+  return match ? unescapeHtml(match[1]).trim() : "";
+}
+
+/** The page's own canonical URL, so per-route og:url is not pinned to the site root. */
+export function canonicalFromDocument(html) {
+  // Ambil canonical TERAKHIR, bukan pertama — dan TIDAK peduli urutan atribut.
+  //
+  // Kenapa yang terakhir: root route (`__root.tsx`) selalu menulis canonical
+  // alamat beranda (`https://web3min.com`) untuk semua halaman, dan tag itu
+  // keluar LEBIH DULU daripada canonical milik rute. Versi lama memakai
+  // `match()` yang mengambil yang PERTAMA, sehingga `og:url` SETIAP halaman
+  // menjadi alamat beranda — terbukti di produksi: `/u/apollo_romanus`
+  // melaporkan `og:url = https://web3min.com`.
+  //
+  // Kenapa per-tag, bukan satu regex: regex gabungan menuntut `rel` muncul
+  // SEBELUM `href`, sehingga `<link href="..." rel="canonical">` tidak
+  // terbaca sama sekali (tertangkap oleh uji unit, bukan dugaan).
+  const tags = String(html ?? "").match(/<link\b[^>]*>/gi);
+  if (!tags || tags.length === 0) return "";
+
+  let last = "";
+  for (const tag of tags) {
+    if (!/\brel\s*=\s*["']canonical["']/i.test(tag)) continue;
+    const href = tag.match(/\bhref\s*=\s*["']([^"']*)["']/i);
+    if (href) last = unescapeHtml(href[1]).trim();
+  }
+  return last;
+}
+
+/**
+ * Kartu share milik halaman (`og:image`), ambil tag TERAKHIR dan jangan peduli
+ * urutan atribut — sama seperti canonical: root route menulis default lebih
+ * dulu, rute yang lebih spesifik (mis. `/kisah/$storyId`) menulis setelahnya.
+ * Dipakai supaya og:image per-rute bisa menang atas kartu situs di middleware.
+ */
+export function ogImageFromDocument(html) {
+  const tags = String(html ?? "").match(/<meta\b[^>]*>/gi);
+  if (!tags || tags.length === 0) return "";
+  let last = "";
+  for (const tag of tags) {
+    if (!/\bproperty\s*=\s*["']og:image["']/i.test(tag)) continue;
+    const content = tag.match(/\bcontent\s*=\s*["']([^"']*)["']/i);
+    if (content) last = unescapeHtml(content[1]).trim();
+  }
+  return last;
+}
+
 export function resolveOgTitle(
   site = {},
   appName = DEFAULT_APP_NAME,
   host = "",
   documentTitle = "",
 ) {
-  const fromSite = String(site.title ?? "").trim();
-  if (fromSite) return fromSite;
+  // Per-route titles win: the page's own `<title>` is the more specific signal.
   const fromDoc = String(documentTitle ?? "").trim();
   if (fromDoc) return fromDoc;
+  const fromSite = String(site.title ?? "").trim();
+  if (fromSite) return fromSite;
   const fromHost = appNameFromHost(host);
   if (fromHost && fromHost !== DEFAULT_APP_NAME) return fromHost;
   const fromArg = String(appName ?? "").trim();
@@ -326,6 +372,37 @@ export function resolveOgCardAsset(site = {}, cwd = process.cwd()) {
   return ogCardPublicPath(cwd) || (detectCustomOgCard(cwd, site) ? String(site.image ?? "").trim() || "/og.jpg" : "");
 }
 
+/**
+ * og:image milik rute hanya dipertahankan kalau memang milik app ini:
+ * same-origin dengan host publik ATAU dengan origin canonical halaman.
+ * Selain itu (host pihak ketiga, `//host/...`, http) ditolak supaya slot
+ * kartu share tidak bisa dibelokkan ke luar. Path relatif diresolusi ke host
+ * publik; nilai kosong / tidak valid mengembalikan "" (pakai kartu situs).
+ */
+export function resolveRouteOgImage(value, publicHost = "", documentUrl = "") {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("/")) {
+    if (raw.startsWith("//") || !publicHost) return "";
+    return `https://${publicHost}${raw}`;
+  }
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return "";
+  }
+  if (url.protocol !== "https:") return "";
+  let docHost = "";
+  try {
+    docHost = new URL(String(documentUrl ?? "")).host;
+  } catch {
+    docHost = "";
+  }
+  const allowed = [publicHost, docHost].filter(Boolean).map((h) => h.toLowerCase());
+  return allowed.includes(url.host.toLowerCase()) ? url.href : "";
+}
+
 /** Stamp `card=custom` when public/og.jpg or public/og.png is on disk. */
 function applyCustomCardFromFs(site, cwd) {
   const disk = ogCardPublicPath(cwd);
@@ -338,32 +415,57 @@ export function grokOgHeadTags({
   appName = DEFAULT_APP_NAME,
   site = {},
   documentTitle = "",
+  documentDescription = "",
+  documentUrl = "",
+  documentImage = "",
   cwd = process.cwd(),
 } = {}) {
   const title = resolveOgTitle(site, appName, host, documentTitle);
   const publicHost = resolvePublicHost(host);
+  const siteName = String(site.title ?? "").trim() || appName;
   const tags = [
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta property="og:title" content="${escapeHtml(title)}">`,
+    `<meta property="og:site_name" content="${escapeHtml(siteName)}">`,
+    `<meta name="twitter:title" content="${escapeHtml(title)}">`,
   ];
-  const description = String(site.description ?? "").trim();
+  // Per-route description (the page's own meta) beats the site-wide one.
+  const description =
+    String(documentDescription ?? "").trim() || String(site.description ?? "").trim();
   if (description) {
     tags.push(`<meta property="og:description" content="${escapeHtml(description)}">`);
+    tags.push(`<meta name="twitter:description" content="${escapeHtml(description)}">`);
   }
-  if (String(site.type ?? "").toLowerCase() === "x:game") {
-    tags.push(`<meta property="og:type" content="x:game">`);
+  const ogType = String(site.type ?? "").toLowerCase() === "x:game" ? "x:game" : "website";
+  tags.push(`<meta property="og:type" content="${ogType}">`);
+  const ogUrl = String(documentUrl ?? "").trim() || String(site.url ?? "").trim() || (publicHost ? `https://${publicHost}` : "");
+  if (ogUrl) {
+    tags.push(`<meta property="og:url" content="${escapeHtml(ogUrl)}">`);
   }
   if (publicHost) {
     const asset = resolveOgCardAsset(site, cwd);
     const custom = Boolean(asset);
-    let image = custom
+    const siteCard = custom
       ? `https://${publicHost}${asset.startsWith("/") ? asset : `/${asset}`}`
       : `${ogServiceUrl()}/v1/card.png?host=${encodeURIComponent(publicHost)}&title=${encodeURIComponent(title)}`;
-    const color = !custom ? placeholderCardColor(site) : "";
+    // Kartu per-rute (mis. /kisah/$storyId) menang atas kartu situs asal
+    // same-origin — lihat resolveRouteOgImage. Kalau rutenya tidak punya
+    // og:image sendiri (atau URL-nya ditolak), kartu situs tetap dipakai.
+    const routeImage = resolveRouteOgImage(documentImage, publicHost, ogUrl);
+    const useRouteImage = Boolean(routeImage) && routeImage !== siteCard;
+    let image = useRouteImage ? routeImage : siteCard;
+    const color = !custom && !useRouteImage ? placeholderCardColor(site) : "";
     if (color) image += `&color=${encodeURIComponent(color)}`;
     tags.push(`<meta property="og:image" content="${escapeHtml(image)}">`);
-    tags.push(`<meta property="og:image:width" content="1200">`);
-    tags.push(`<meta property="og:image:height" content="630">`);
+    // Ukuran 1200x630 hanya benar untuk kartu platform / og.jpg. Gambar rute
+    // punya dimensi sendiri — jangan diklaim.
+    if (!useRouteImage) {
+      tags.push(`<meta property="og:image:width" content="1200">`);
+      tags.push(`<meta property="og:image:height" content="630">`);
+    }
+    tags.push(`<meta property="og:image:alt" content="${escapeHtml(title)}">`);
+    tags.push(`<meta name="twitter:image" content="${escapeHtml(image)}">`);
+    tags.push(`<meta name="twitter:image:alt" content="${escapeHtml(title)}">`);
     const banner = String(site.banner ?? "").trim();
     if (banner) {
       const bannerUrl = `https://${publicHost}${banner.startsWith("/") ? banner : `/${banner}`}`;
@@ -386,13 +488,21 @@ export function stripShareMetaTags(html) {
 }
 
 function insertAfterHeadOpen(html, snippet) {
-  if (/<head\b[^>]*>/i.test(html)) {
-    return html.replace(/<head\b[^>]*>/i, (open) => `${open}${snippet}`);
+  // Ensure <meta charset="utf-8"> is placed at the absolute top of <head>
+  const charsetMatch = html.match(/<meta\s+charSet=["']utf-8["'][^>]*\/?>|<meta\s+charset=["']utf-8["'][^>]*\/?>/i);
+  let cleaned = html;
+  let charsetPrefix = "";
+  if (charsetMatch) {
+    cleaned = cleaned.replace(charsetMatch[0], "");
+    charsetPrefix = '<meta charset="utf-8">';
   }
-  if (/<html\b[^>]*>/i.test(html)) {
-    return html.replace(/<html\b[^>]*>/i, (open) => `${open}<head>${snippet}</head>`);
+  if (/<head\b[^>]*>/i.test(cleaned)) {
+    return cleaned.replace(/<head\b[^>]*>/i, (open) => `${open}${charsetPrefix}${snippet}`);
   }
-  return `<!doctype html><html><head>${snippet}</head>${html}`;
+  if (/<html\b[^>]*>/i.test(cleaned)) {
+    return cleaned.replace(/<html\b[^>]*>/i, (open) => `${open}<head>${charsetPrefix}${snippet}</head>`);
+  }
+  return `<!doctype html><html><head>${charsetPrefix}${snippet}</head>${cleaned}`;
 }
 
 function insertBeforeHeadClose(html, snippet) {
@@ -426,6 +536,9 @@ export function injectGrokPwaHead(html, ctx = {}) {
   if (typeof html !== "string") return html;
   const { site, projectId, creator, creatorId, host, cwd } = normalizeHeadContext(ctx);
   const documentTitle = titleFromDocument(html);
+  const documentDescription = descriptionFromDocument(html);
+  const documentUrl = canonicalFromDocument(html);
+  const documentImage = ogImageFromDocument(html);
   const appName = resolveOgTitle(
     site,
     ctx.appName ?? DEFAULT_APP_NAME,
@@ -436,15 +549,15 @@ export function injectGrokPwaHead(html, ctx = {}) {
 
   const missing = grokPwaHeadTags(appName)
     .filter(([key]) => {
-      if (key === "manifest") return !next.includes('href="/__grok/manifest.webmanifest"');
-      if (key === "apple-touch-icon") return !next.includes('href="/__grok/icon-180.png"');
+      if (key === "manifest") return !next.includes('rel="manifest"') && !next.includes("rel='manifest'");
+      if (key === "apple-touch-icon") return !next.includes('rel="apple-touch-icon"') && !next.includes("rel='apple-touch-icon'");
       return !next.includes(`name="${key}"`);
     })
     .map(([, tag]) => tag);
 
   next = insertAfterHeadOpen(
     next,
-    grokOgHeadTags({ host, appName, site, documentTitle, cwd }).join(""),
+    grokOgHeadTags({ host, appName, site, documentTitle, documentDescription, documentUrl, documentImage, cwd }).join(""),
   );
 
   if (!next.includes("/grok-app-builder/extensions.js")) {
