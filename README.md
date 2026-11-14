@@ -28,3 +28,11 @@ Progress tersimpan di browser (`localStorage`, key `web3min-v2`).
 npm run typecheck
 npm run build
 ```
+
+## Lisensi
+
+MIT — lihat [LICENSE](LICENSE).
+
+## Hosting
+
+Hosting sponsored by [Simafri](https://www.simafri.com/en/managed-vps/) (managed VPS)
